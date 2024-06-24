@@ -18,20 +18,43 @@
 package extension
 
 import (
-	"github.com/apache/dubbo-go/filter"
+	"github.com/pkg/errors"
+)
+
+import (
+	"dubbo.apache.org/dubbo-go/v3/filter"
 )
 
 var (
-	filters = make(map[string]func() filter.Filter)
+	filters                  = make(map[string]func() filter.Filter)
+	rejectedExecutionHandler = make(map[string]func() filter.RejectedExecutionHandler)
 )
 
+// SetFilter sets the filter extension with @name
+// For example: hystrix/metrics/token/tracing/limit/...
 func SetFilter(name string, v func() filter.Filter) {
 	filters[name] = v
 }
 
-func GetFilter(name string) filter.Filter {
+// GetFilter finds the filter extension with @name
+func GetFilter(name string) (filter.Filter, bool) {
 	if filters[name] == nil {
-		panic("filter for " + name + " is not existing, make sure you have import the package.")
+		return nil, false
 	}
-	return filters[name]()
+	return filters[name](), true
+}
+
+// SetRejectedExecutionHandler sets the RejectedExecutionHandler with @name
+func SetRejectedExecutionHandler(name string, creator func() filter.RejectedExecutionHandler) {
+	rejectedExecutionHandler[name] = creator
+}
+
+// GetRejectedExecutionHandler finds the RejectedExecutionHandler with @name
+func GetRejectedExecutionHandler(name string) (filter.RejectedExecutionHandler, error) {
+	creator, ok := rejectedExecutionHandler[name]
+	if !ok {
+		return nil, errors.New("RejectedExecutionHandler for " + name + " is not existing, make sure you have import the package " +
+			"and you have register it by invoking extension.SetRejectedExecutionHandler.")
+	}
+	return creator(), nil
 }

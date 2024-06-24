@@ -14,35 +14,69 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package config
 
 import (
-	"strings"
+	"github.com/creasty/defaults"
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
 )
 
+// ProtocolConfig is protocol configuration
 type ProtocolConfig struct {
-	Name string `required:"true" yaml:"name"  json:"name,omitempty" property:"name"`
-	Ip   string `required:"true" yaml:"ip"  json:"ip,omitempty" property:"ip"`
-	Port string `required:"true" yaml:"port"  json:"port,omitempty" property:"port"`
+	Name   string      `default:"dubbo" validate:"required" yaml:"name" json:"name,omitempty" property:"name"`
+	Ip     string      `yaml:"ip"  json:"ip,omitempty" property:"ip"`
+	Port   string      `default:"20000" yaml:"port" json:"port,omitempty" property:"port"`
+	Params interface{} `yaml:"params" json:"params,omitempty" property:"params"`
 }
 
-func (c *ProtocolConfig) Prefix() string {
-	return constant.ProtocolConfigPrefix
+// Prefix dubbo.config-center
+func (ProtocolConfig) Prefix() string {
+	return constant.ConfigCenterPrefix
 }
 
-func loadProtocol(protocolsIds string, protocols map[string]*ProtocolConfig) []*ProtocolConfig {
-	returnProtocols := []*ProtocolConfig{}
-	for _, v := range strings.Split(protocolsIds, ",") {
-		for k, prot := range protocols {
-			if v == k {
-				returnProtocols = append(returnProtocols, prot)
-			}
-		}
+func GetProtocolsInstance() map[string]*ProtocolConfig {
+	return make(map[string]*ProtocolConfig, 1)
+}
 
+func (p *ProtocolConfig) Init() error {
+	if err := defaults.Set(p); err != nil {
+		return err
 	}
-	return returnProtocols
+	return verify(p)
+}
+
+func NewProtocolConfigBuilder() *ProtocolConfigBuilder {
+	return &ProtocolConfigBuilder{protocolConfig: &ProtocolConfig{}}
+}
+
+type ProtocolConfigBuilder struct {
+	protocolConfig *ProtocolConfig
+}
+
+func (pcb *ProtocolConfigBuilder) SetName(name string) *ProtocolConfigBuilder {
+	pcb.protocolConfig.Name = name
+	return pcb
+}
+
+func (pcb *ProtocolConfigBuilder) SetIp(ip string) *ProtocolConfigBuilder {
+	pcb.protocolConfig.Ip = ip
+	return pcb
+}
+
+func (pcb *ProtocolConfigBuilder) SetPort(port string) *ProtocolConfigBuilder {
+	pcb.protocolConfig.Port = port
+	return pcb
+}
+
+func (pcb *ProtocolConfigBuilder) SetParams(params interface{}) *ProtocolConfigBuilder {
+	pcb.protocolConfig.Params = params
+	return pcb
+}
+
+func (pcb *ProtocolConfigBuilder) Build() *ProtocolConfig {
+	return pcb.protocolConfig
 }

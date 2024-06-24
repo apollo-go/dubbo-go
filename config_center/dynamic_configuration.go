@@ -22,39 +22,70 @@ import (
 )
 
 import (
-	"github.com/apache/dubbo-go/config_center/parser"
+	gxset "github.com/dubbogo/gost/container/set"
 )
 
-//////////////////////////////////////////
-// DynamicConfiguration
-//////////////////////////////////////////
-const DEFAULT_GROUP = "dubbo"
-const DEFAULT_CONFIG_TIMEOUT = "10s"
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/config_center/parser"
+)
 
+const (
+	DefaultGroup         = "dubbo"
+	DefaultConfigTimeout = "10s"
+)
+
+// DynamicConfiguration is the interface which modifys listener and gets properties file.
 type DynamicConfiguration interface {
 	Parser() parser.ConfigurationParser
 	SetParser(parser.ConfigurationParser)
 	AddListener(string, ConfigurationListener, ...Option)
 	RemoveListener(string, ConfigurationListener, ...Option)
-	GetConfig(string, ...Option) (string, error)
-	GetConfigs(string, ...Option) (string, error)
+	// GetProperties get properties file
+	GetProperties(string, ...Option) (string, error)
+
+	// GetRule get Router rule properties file
+	GetRule(string, ...Option) (string, error)
+
+	// GetInternalProperty get value by key in Default properties file(dubbo.properties)
+	GetInternalProperty(string, ...Option) (string, error)
+
+	// PublishConfig will publish the config with the (key, group, value) pair
+	// for zk: path is /$(group)/config/$(key) -> value
+	// for nacos: group, key -> value
+	PublishConfig(string, string, string) error
+
+	// RemoveConfig will remove the config white the (key, group) pair
+	RemoveConfig(string, string) error
+
+	// GetConfigKeysByGroup will return all keys with the group
+	GetConfigKeysByGroup(group string) (*gxset.HashSet, error)
 }
 
+// Options ...
 type Options struct {
 	Group   string
 	Timeout time.Duration
 }
 
+// Option ...
 type Option func(*Options)
 
+// WithGroup assigns group to opt.Group
 func WithGroup(group string) Option {
 	return func(opt *Options) {
 		opt.Group = group
 	}
 }
 
+// WithTimeout assigns time to opt.Timeout
 func WithTimeout(time time.Duration) Option {
 	return func(opt *Options) {
 		opt.Timeout = time
 	}
+}
+
+// GetRuleKey The format is '{interfaceName}:[version]:[group]'
+func GetRuleKey(url *common.URL) string {
+	return url.ColonSeparatedKey()
 }

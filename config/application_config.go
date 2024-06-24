@@ -19,37 +19,93 @@ package config
 
 import (
 	"github.com/creasty/defaults"
+
+	"github.com/pkg/errors"
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
 )
 
+// ApplicationConfig is a configuration for current applicationConfig, whether the applicationConfig is a provider or a consumer
 type ApplicationConfig struct {
-	Organization string `yaml:"organization"  json:"organization,omitempty" property:"organization"`
-	Name         string `yaml:"name" json:"name,omitempty" property:"name"`
-	Module       string `yaml:"module" json:"module,omitempty" property:"module"`
+	Organization string `default:"dubbo-go" yaml:"organization" json:"organization,omitempty" property:"organization"`
+	Name         string `default:"dubbo.io" yaml:"name" json:"name,omitempty" property:"name"`
+	Module       string `default:"sample" yaml:"module" json:"module,omitempty" property:"module"`
+	Group        string `yaml:"group" json:"group,omitempty" property:"module"`
 	Version      string `yaml:"version" json:"version,omitempty" property:"version"`
-	Owner        string `yaml:"owner" json:"owner,omitempty" property:"owner"`
+	Owner        string `default:"dubbo-go" yaml:"owner" json:"owner,omitempty" property:"owner"`
 	Environment  string `yaml:"environment" json:"environment,omitempty" property:"environment"`
+	// the metadata type. remote or local
+	MetadataType string `default:"local" yaml:"metadata-type" json:"metadataType,omitempty" property:"metadataType"`
 }
 
-func (*ApplicationConfig) Prefix() string {
-	return constant.DUBBO + ".application."
+// Prefix dubbo.application
+func (ApplicationConfig) Prefix() string {
+	return constant.ApplicationConfigPrefix
 }
-func (c *ApplicationConfig) Id() string {
-	return ""
-}
-func (c *ApplicationConfig) SetId(id string) {
 
-}
-func (c *ApplicationConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	if err := defaults.Set(c); err != nil {
-		return err
+// Init  application config and set default value
+func (ac *ApplicationConfig) Init() error {
+	if ac == nil {
+		return errors.New("application is null")
 	}
-	type plain ApplicationConfig
-	if err := unmarshal((*plain)(c)); err != nil {
+	if err := ac.check(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (ac *ApplicationConfig) check() error {
+	if err := defaults.Set(ac); err != nil {
+		return err
+	}
+	return verify(ac)
+}
+
+func NewApplicationConfigBuilder() *ApplicationConfigBuilder {
+	return &ApplicationConfigBuilder{application: &ApplicationConfig{}}
+}
+
+type ApplicationConfigBuilder struct {
+	application *ApplicationConfig
+}
+
+func (acb *ApplicationConfigBuilder) SetOrganization(organization string) *ApplicationConfigBuilder {
+	acb.application.Organization = organization
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetName(name string) *ApplicationConfigBuilder {
+	acb.application.Name = name
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetModule(module string) *ApplicationConfigBuilder {
+	acb.application.Module = module
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetVersion(version string) *ApplicationConfigBuilder {
+	acb.application.Version = version
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetOwner(owner string) *ApplicationConfigBuilder {
+	acb.application.Owner = owner
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetEnvironment(environment string) *ApplicationConfigBuilder {
+	acb.application.Environment = environment
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) SetMetadataType(metadataType string) *ApplicationConfigBuilder {
+	acb.application.MetadataType = metadataType
+	return acb
+}
+
+func (acb *ApplicationConfigBuilder) Build() *ApplicationConfig {
+	return acb.application
 }

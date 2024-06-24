@@ -19,72 +19,40 @@ package zookeeper
 
 import (
 	"sync"
-)
-import (
-	"github.com/dubbogo/getty"
-	perrors "github.com/pkg/errors"
+	"time"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/logger"
+	gxzookeeper "github.com/dubbogo/gost/database/kv/zk"
+	"github.com/dubbogo/gost/log/logger"
 )
 
-type zkClientFacade interface {
-	ZkClient() *ZookeeperClient
-	SetZkClient(*ZookeeperClient)
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
+)
+
+type ZkClientFacade interface {
+	ZkClient() *gxzookeeper.ZookeeperClient
+	SetZkClient(*gxzookeeper.ZookeeperClient)
 	ZkClientLock() *sync.Mutex
-	WaitGroup() *sync.WaitGroup //for wait group control, zk client listener & zk client container
-	GetDone() chan struct{}     //for zk client control
+	WaitGroup() *sync.WaitGroup // for wait group control, zk client listener & zk client container
+	Done() chan struct{}        // for registry destroy
 	RestartCallBack() bool
-	common.Node
+	GetURL() *common.URL
 }
 
-func HandleClientRestart(r zkClientFacade) {
-	var (
-		err error
-
-		failTimes int
-	)
-
+// HandleClientRestart keeps the connection between client and server
+// This method should be used only once. You can use handleClientRestart() in package registry.
+func HandleClientRestart(r ZkClientFacade) {
 	defer r.WaitGroup().Done()
-LOOP:
 	for {
 		select {
-		case <-r.GetDone():
-			logger.Warnf("(ZkProviderRegistry)reconnectZkRegistry goroutine exit now...")
-			break LOOP
-			// re-register all services
-		case <-r.ZkClient().Done():
-			r.ZkClientLock().Lock()
-			r.ZkClient().Close()
-			zkName := r.ZkClient().name
-			zkAddress := r.ZkClient().ZkAddrs
-			r.SetZkClient(nil)
-			r.ZkClientLock().Unlock()
-
-			// Connect zk until success.
-			failTimes = 0
-			for {
-				select {
-				case <-r.GetDone():
-					logger.Warnf("(ZkProviderRegistry)reconnectZkRegistry goroutine exit now...")
-					break LOOP
-				case <-getty.GetTimeWheel().After(timeSecondDuration(failTimes * ConnDelay)): // Prevent crazy reconnection zk.
-				}
-				err = ValidateZookeeperClient(r, WithZkName(zkName))
-				logger.Infof("ZkProviderRegistry.validateZookeeperClient(zkAddr{%s}) = error{%#v}",
-					zkAddress, perrors.WithStack(err))
-				if err == nil {
-					if r.RestartCallBack() {
-						break
-					}
-				}
-				failTimes++
-				if MaxFailTimes <= failTimes {
-					failTimes = MaxFailTimes
-				}
-			}
+		case <-r.ZkClient().Reconnect():
+			r.RestartCallBack()
+			time.Sleep(10 * time.Microsecond)
+		case <-r.Done():
+			logger.Warnf("receive registry destroy event, quit client restart handler")
+			return
 		}
 	}
 }

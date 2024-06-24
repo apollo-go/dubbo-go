@@ -20,17 +20,26 @@ package jsonrpc
 import (
 	"strings"
 	"sync"
+	"time"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/extension"
-	"github.com/apache/dubbo-go/common/logger"
-	"github.com/apache/dubbo-go/config"
-	"github.com/apache/dubbo-go/protocol"
+	"github.com/dubbogo/gost/log/logger"
 )
 
-const JSONRPC = "jsonrpc"
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/extension"
+	"dubbo.apache.org/dubbo-go/v3/config"
+	"dubbo.apache.org/dubbo-go/v3/protocol"
+)
+
+const (
+	// JSONRPC
+	// module name
+	JSONRPC = "jsonrpc"
+)
 
 func init() {
 	extension.SetProtocol(JSONRPC, GetProtocol)
@@ -38,12 +47,14 @@ func init() {
 
 var jsonrpcProtocol *JsonrpcProtocol
 
+// JsonrpcProtocol is JSON RPC protocol.
 type JsonrpcProtocol struct {
 	protocol.BaseProtocol
 	serverMap  map[string]*Server
 	serverLock sync.Mutex
 }
 
+// NewJsonrpcProtocol creates JSON RPC protocol
 func NewJsonrpcProtocol() *JsonrpcProtocol {
 	return &JsonrpcProtocol{
 		BaseProtocol: protocol.NewBaseProtocol(),
@@ -51,13 +62,14 @@ func NewJsonrpcProtocol() *JsonrpcProtocol {
 	}
 }
 
+// Export JSON RPC service for remote invocation
 func (jp *JsonrpcProtocol) Export(invoker protocol.Invoker) protocol.Exporter {
-	url := invoker.GetUrl()
+	url := invoker.GetURL()
 	serviceKey := strings.TrimPrefix(url.Path, "/")
 
 	exporter := NewJsonrpcExporter(serviceKey, invoker, jp.ExporterMap())
 	jp.SetExporterMap(serviceKey, exporter)
-	logger.Infof("Export service: %s", url.String())
+	logger.Infof("[JSONRPC protocol] Export service: %s", url.String())
 
 	// start server
 	jp.openServer(url)
@@ -65,16 +77,22 @@ func (jp *JsonrpcProtocol) Export(invoker protocol.Invoker) protocol.Exporter {
 	return exporter
 }
 
-func (jp *JsonrpcProtocol) Refer(url common.URL) protocol.Invoker {
+// Refer a remote JSON PRC service from registry
+func (jp *JsonrpcProtocol) Refer(url *common.URL) protocol.Invoker {
+	rtStr := config.GetConsumerConfig().RequestTimeout
+	// the read order of requestTimeout is from url , if nil then from consumer config , if nil then default 3s. requestTimeout can be dynamically updated from config center.
+	requestTimeout := url.GetParamDuration(constant.TimeoutKey, rtStr)
+	// New Json rpc Invoker
 	invoker := NewJsonrpcInvoker(url, NewHTTPClient(&HTTPOptions{
-		HandshakeTimeout: config.GetConsumerConfig().ConnectTimeout,
-		HTTPTimeout:      config.GetConsumerConfig().RequestTimeout,
+		HandshakeTimeout: time.Second, // todo config timeout config.GetConsumerConfig().ConnectTimeout,
+		HTTPTimeout:      requestTimeout,
 	}))
 	jp.SetInvokers(invoker)
-	logger.Infof("Refer service: %s", url.String())
+	logger.Infof("[JSONRPC Protocol] Refer service: %s", url.String())
 	return invoker
 }
 
+// Destroy will destroy all invoker and exporter, so it only is called once.
 func (jp *JsonrpcProtocol) Destroy() {
 	logger.Infof("jsonrpcProtocol destroy.")
 
@@ -87,11 +105,11 @@ func (jp *JsonrpcProtocol) Destroy() {
 	}
 }
 
-func (jp *JsonrpcProtocol) openServer(url common.URL) {
+func (jp *JsonrpcProtocol) openServer(url *common.URL) {
 	_, ok := jp.serverMap[url.Location]
 	if !ok {
-		_, ok := jp.ExporterMap().Load(strings.TrimPrefix(url.Path, "/"))
-		if !ok {
+		_, loadOk := jp.ExporterMap().Load(strings.TrimPrefix(url.Path, "/"))
+		if !loadOk {
 			panic("[JsonrpcProtocol]" + url.Key() + "is not existing")
 		}
 
@@ -106,6 +124,7 @@ func (jp *JsonrpcProtocol) openServer(url common.URL) {
 	}
 }
 
+// GetProtocol gets JSON RPC protocol.
 func GetProtocol() protocol.Protocol {
 	if jsonrpcProtocol == nil {
 		jsonrpcProtocol = NewJsonrpcProtocol()

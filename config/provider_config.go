@@ -14,109 +14,256 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package config
 
 import (
-	"context"
-	"io/ioutil"
-	"path"
+	"fmt"
 )
 
 import (
 	"github.com/creasty/defaults"
+
+	"github.com/dubbogo/gost/log/logger"
+
+	tripleConstant "github.com/dubbogo/triple/pkg/common/constant"
+
 	perrors "github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/logger"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	aslimiter "dubbo.apache.org/dubbo-go/v3/filter/adaptivesvc/limiter"
 )
 
-/////////////////////////
-// providerConfig
-/////////////////////////
-
+// ProviderConfig is the default configuration of service provider
 type ProviderConfig struct {
-	BaseConfig   `yaml:",inline"`
-	Filter       string `yaml:"filter" json:"filter,omitempty" property:"filter"`
-	ProxyFactory string `yaml:"proxy_factory" default:"default" json:"proxy_factory,omitempty" property:"proxy_factory"`
+	Filter string `yaml:"filter" json:"filter,omitempty" property:"filter"`
+	// Deprecated Register whether registration is required
+	Register bool `yaml:"register" json:"register" property:"register"`
+	// RegistryIDs is registry ids list
+	RegistryIDs []string `yaml:"registry-ids" json:"registry-ids" property:"registry-ids"`
+	// protocol
+	ProtocolIDs []string `yaml:"protocol-ids" json:"protocol-ids" property:"protocol-ids"`
+	// TracingKey is tracing ids list
+	TracingKey string `yaml:"tracing-key" json:"tracing-key" property:"tracing-key"`
+	// Services services
+	Services     map[string]*ServiceConfig `yaml:"services" json:"services,omitempty" property:"services"`
+	ProxyFactory string                    `default:"default" yaml:"proxy" json:"proxy,omitempty" property:"proxy"`
+	FilterConf   interface{}               `yaml:"filter_conf" json:"filter_conf,omitempty" property:"filter_conf"`
+	ConfigType   map[string]string         `yaml:"config_type" json:"config_type,omitempty" property:"config_type"`
+	// adaptive service
+	AdaptiveService        bool `default:"false" yaml:"adaptive-service" json:"adaptive-service" property:"adaptive-service"`
+	AdaptiveServiceVerbose bool `default:"false" yaml:"adaptive-service-verbose" json:"adaptive-service-verbose" property:"adaptive-service-verbose"`
 
-	ApplicationConfig *ApplicationConfig         `yaml:"application" json:"application,omitempty" property:"application"`
-	Registry          *RegistryConfig            `yaml:"registry" json:"registry,omitempty" property:"registry"`
-	Registries        map[string]*RegistryConfig `yaml:"registries" json:"registries,omitempty" property:"registries"`
-	Services          map[string]*ServiceConfig  `yaml:"services" json:"services,omitempty" property:"services"`
-	Protocols         map[string]*ProtocolConfig `yaml:"protocols" json:"protocols,omitempty" property:"protocols"`
-	ProtocolConf      interface{}                `yaml:"protocol_conf" json:"protocol_conf,omitempty" property:"protocol_conf" `
-	FilterConf        interface{}                `yaml:"filter_conf" json:"filter_conf,omitempty" property:"filter_conf" `
+	rootConfig *RootConfig
 }
 
-func (c *ProviderConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	if err := defaults.Set(c); err != nil {
-		return err
-	}
-	type plain ProviderConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (*ProviderConfig) Prefix() string {
+func (ProviderConfig) Prefix() string {
 	return constant.ProviderConfigPrefix
 }
 
-func SetProviderConfig(p ProviderConfig) {
-	providerConfig = &p
-}
-func GetProviderConfig() ProviderConfig {
-	if providerConfig == nil {
-		logger.Warnf("providerConfig is nil!")
-		return ProviderConfig{}
+func (c *ProviderConfig) check() error {
+	if err := defaults.Set(c); err != nil {
+		return err
 	}
-	return *providerConfig
+	return verify(c)
 }
 
-func ProviderInit(confProFile string) error {
-	if len(confProFile) == 0 {
-		return perrors.Errorf("application configure(provider) file name is nil")
+func (c *ProviderConfig) Init(rc *RootConfig) error {
+	if c == nil {
+		return nil
+	}
+	c.RegistryIDs = translateIds(c.RegistryIDs)
+	if len(c.RegistryIDs) <= 0 {
+		c.RegistryIDs = rc.getRegistryIds()
+	}
+	c.ProtocolIDs = translateIds(c.ProtocolIDs)
+
+	if c.TracingKey == "" && len(rc.Tracing) > 0 {
+		for k, _ := range rc.Tracing {
+			c.TracingKey = k
+			break
+		}
+	}
+	for key, serviceConfig := range c.Services {
+		if serviceConfig.Interface == "" {
+			service := GetProviderService(key)
+			// try to use interface name defined by pb
+			supportPBPackagerNameSerivce, ok := service.(common.TriplePBService)
+			if !ok {
+				logger.Errorf("Service with reference = %s is not support read interface name from it."+
+					"Please run go install github.com/dubbogo/dubbogo-cli/cmd/protoc-gen-go-triple@latest to update your "+
+					"protoc-gen-go-triple and re-generate your pb file again."+
+					"If you are not using pb serialization, please set 'interface' field in service config.", key)
+				continue
+			} else {
+				// use interface name defined by pb
+				serviceConfig.Interface = supportPBPackagerNameSerivce.XXX_InterfaceName()
+			}
+		}
+		if err := serviceConfig.Init(rc); err != nil {
+			return err
+		}
+
+		serviceConfig.adaptiveService = c.AdaptiveService
 	}
 
-	if path.Ext(confProFile) != ".yml" {
-		return perrors.Errorf("application configure file name{%v} suffix must be .yml", confProFile)
-	}
+	for k, v := range rc.Protocols {
+		if v.Name == tripleConstant.TRIPLE {
+			// Auto create grpc based health check service.
+			healthService := NewServiceConfigBuilder().
+				SetProtocolIDs(k).
+				SetNotRegister(true).
+				SetInterface(constant.HealthCheckServiceInterface).
+				Build()
+			if err := healthService.Init(rc); err != nil {
+				return err
+			}
+			c.Services[constant.HealthCheckServiceTypeName] = healthService
 
-	confFileStream, err := ioutil.ReadFile(confProFile)
-	if err != nil {
-		return perrors.Errorf("ioutil.ReadFile(file:%s) = error:%v", confProFile, perrors.WithStack(err))
-	}
-	providerConfig = &ProviderConfig{}
-	err = yaml.Unmarshal(confFileStream, providerConfig)
-	if err != nil {
-		return perrors.Errorf("yaml.Unmarshal() = error:%v", perrors.WithStack(err))
-	}
-
-	//set method interfaceId & interfaceName
-	for k, v := range providerConfig.Services {
-		//set id for reference
-		for _, n := range providerConfig.Services[k].Methods {
-			n.InterfaceName = v.InterfaceName
-			n.InterfaceId = k
+			// Auto create reflection service configure only when provider with triple service is configured.
+			tripleReflectionService := NewServiceConfigBuilder().
+				SetProtocolIDs(k).
+				SetNotRegister(true).
+				SetInterface(constant.ReflectionServiceInterface).
+				Build()
+			if err := tripleReflectionService.Init(rc); err != nil {
+				return err
+			}
+			// Maybe only register once, If setting this service, break from traversing Protocols.
+			c.Services[constant.ReflectionServiceTypeName] = tripleReflectionService
+			break
 		}
 	}
 
-	logger.Debugf("provider config{%#v}\n", providerConfig)
+	if err := c.check(); err != nil {
+		return err
+	}
+	// enable adaptive service verbose
+	if c.AdaptiveServiceVerbose {
+		if !c.AdaptiveService {
+			return perrors.Errorf("The adaptive service is disabled, " +
+				"adaptive service verbose should be disabled either.")
+		}
+		logger.Infof("adaptive service verbose is enabled.")
+		logger.Debugf("debug-level info could be shown.")
+		aslimiter.Verbose = true
+	}
 	return nil
 }
 
-func configCenterRefreshProvider() error {
-	//fresh it
-	if providerConfig.ConfigCenterConfig != nil {
-		providerConfig.fatherConfig = providerConfig
-		if err := providerConfig.startConfigCenter(context.Background()); err != nil {
-			return perrors.Errorf("start config center error , error message is {%v}", perrors.WithStack(err))
+func (c *ProviderConfig) Load() {
+	for registeredTypeName, service := range GetProviderServiceMap() {
+		serviceConfig, ok := c.Services[registeredTypeName]
+		if !ok {
+			if registeredTypeName == constant.ReflectionServiceTypeName ||
+				registeredTypeName == constant.HealthCheckServiceTypeName {
+				// do not auto generate reflection or health check server's configuration.
+				continue
+			}
+			// service doesn't config in config file, create one with default
+			logger.Warnf("Dubbogo can not find service with registeredTypeName %s in configuration. Use the default configuration instead.", registeredTypeName)
+			supportPBPackagerNameSerivce, ok := service.(common.TriplePBService)
+			serviceConfig = NewServiceConfigBuilder().Build()
+			if !ok {
+				logger.Errorf("Dubbogo do not read service interface name with registeredTypeName = %s."+
+					"Please run go install github.com/dubbogo/dubbogo-cli/cmd/protoc-gen-go-triple@latest to update your "+
+					"protoc-gen-go-triple and re-generate your pb file again."+
+					"If you are not using pb serialization, please set 'interface' field in service config.", registeredTypeName)
+				continue
+			} else {
+				// use interface name defined by pb
+				serviceConfig.Interface = supportPBPackagerNameSerivce.XXX_InterfaceName()
+			}
+			if err := serviceConfig.Init(rootConfig); err != nil {
+				logger.Errorf("Service with refKey = %s init failed with error = %s")
+			}
+			serviceConfig.adaptiveService = c.AdaptiveService
 		}
-		providerConfig.fresh()
+		serviceConfig.id = registeredTypeName
+		serviceConfig.Implement(service)
+		if err := serviceConfig.Export(); err != nil {
+			logger.Errorf(fmt.Sprintf("service with registeredTypeName = %s export failed! err: %#v", registeredTypeName, err))
+		}
 	}
-	return nil
+}
+
+// newEmptyProviderConfig returns ProviderConfig with default ApplicationConfig
+func newEmptyProviderConfig() *ProviderConfig {
+	newProviderConfig := &ProviderConfig{
+		Services:    make(map[string]*ServiceConfig),
+		RegistryIDs: make([]string, 8),
+		ProtocolIDs: make([]string, 8),
+	}
+	return newProviderConfig
+}
+
+type ProviderConfigBuilder struct {
+	providerConfig *ProviderConfig
+}
+
+func NewProviderConfigBuilder() *ProviderConfigBuilder {
+	return &ProviderConfigBuilder{providerConfig: newEmptyProviderConfig()}
+}
+
+func (pcb *ProviderConfigBuilder) SetFilter(filter string) *ProviderConfigBuilder {
+	pcb.providerConfig.Filter = filter
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetRegister(register bool) *ProviderConfigBuilder {
+	pcb.providerConfig.Register = register
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetRegistryIDs(RegistryIDs ...string) *ProviderConfigBuilder {
+	pcb.providerConfig.RegistryIDs = RegistryIDs
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetServices(services map[string]*ServiceConfig) *ProviderConfigBuilder {
+	pcb.providerConfig.Services = services
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) AddService(serviceID string, serviceConfig *ServiceConfig) *ProviderConfigBuilder {
+	if pcb.providerConfig.Services == nil {
+		pcb.providerConfig.Services = make(map[string]*ServiceConfig)
+	}
+	pcb.providerConfig.Services[serviceID] = serviceConfig
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetProxyFactory(proxyFactory string) *ProviderConfigBuilder {
+	pcb.providerConfig.ProxyFactory = proxyFactory
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetFilterConf(filterConf interface{}) *ProviderConfigBuilder {
+	pcb.providerConfig.FilterConf = filterConf
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetConfigType(configType map[string]string) *ProviderConfigBuilder {
+	pcb.providerConfig.ConfigType = configType
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) AddConfigType(key, value string) *ProviderConfigBuilder {
+	if pcb.providerConfig.ConfigType == nil {
+		pcb.providerConfig.ConfigType = make(map[string]string)
+	}
+	pcb.providerConfig.ConfigType[key] = value
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) SetRootConfig(rootConfig *RootConfig) *ProviderConfigBuilder {
+	pcb.providerConfig.rootConfig = rootConfig
+	return pcb
+}
+
+func (pcb *ProviderConfigBuilder) Build() *ProviderConfig {
+	return pcb.providerConfig
 }

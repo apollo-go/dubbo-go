@@ -14,14 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package configurator
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/config_center"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/config_center"
 )
 
+// NewMockConfigurator creates a new mockConfigurator
 func NewMockConfigurator(url *common.URL) config_center.Configurator {
 	return &mockConfigurator{configuratorUrl: url}
 }
@@ -30,12 +32,14 @@ type mockConfigurator struct {
 	configuratorUrl *common.URL
 }
 
+// GetUrl gets a configuratorUrl
 func (c *mockConfigurator) GetUrl() *common.URL {
 	return c.configuratorUrl
 }
 
+// Configure sets up param ClusterKey and cluster for url
 func (c *mockConfigurator) Configure(url *common.URL) {
-	if cluster := c.GetUrl().GetParam(constant.CLUSTER_KEY, ""); cluster != "" {
-		url.SetParam(constant.CLUSTER_KEY, cluster)
+	if cluster := c.GetUrl().GetParam(constant.ClusterKey, ""); cluster != "" {
+		url.SetParam(constant.ClusterKey, cluster)
 	}
 }

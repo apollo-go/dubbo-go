@@ -18,15 +18,45 @@
 package protocol
 
 import (
+	"context"
 	"reflect"
 )
 
+// Invocation is a interface which is invocation for each remote method.
 type Invocation interface {
+	// MethodName gets invocation method name.
 	MethodName() string
+	// ActualMethodName gets actual invocation method name. It returns the method name been called if it's a generic call
+	ActualMethodName() string
+	// ParameterTypeNames gets invocation parameter type names.
+	ParameterTypeNames() []string
+	// ParameterTypes gets invocation parameter types.
 	ParameterTypes() []reflect.Type
+	// ParameterValues gets invocation parameter values.
+	ParameterValues() []reflect.Value
+	// Arguments gets arguments.
 	Arguments() []interface{}
+	// Reply gets response of request
 	Reply() interface{}
-	Attachments() map[string]string
-	AttachmentsByKey(string, string) string
+	// Attachments gets all attachments
+
+	// Invoker gets the invoker in current context.
 	Invoker() Invoker
+	// IsGenericInvocation gets if this is a generic invocation
+	IsGenericInvocation() bool
+
+	Attachments() map[string]interface{}
+	SetAttachment(key string, value interface{})
+	GetAttachment(key string) (string, bool)
+	GetAttachmentInterface(string) interface{}
+	GetAttachmentWithDefaultValue(key string, defaultValue string) string
+	GetAttachmentAsContext() context.Context
+
+	// Attributes firstly introduced on dubbo-java 2.7.6. It is
+	// used in internal invocation, that is, it's not passed between
+	// server and client.
+	Attributes() map[string]interface{}
+	SetAttribute(key string, value interface{})
+	GetAttribute(key string) (interface{}, bool)
+	GetAttributeWithDefaultValue(key string, defaultValue interface{}) interface{}
 }

@@ -22,13 +22,16 @@ import (
 )
 
 import (
-	"github.com/apache/dubbo-go/remoting"
+	"dubbo.apache.org/dubbo-go/v3/remoting"
 )
 
+// ConfigurationListener for changing listener's event
 type ConfigurationListener interface {
+	// Process the notification event once there's any change happens on the config
 	Process(*ConfigChangeEvent)
 }
 
+// ConfigChangeEvent for changing listener's event
 type ConfigChangeEvent struct {
 	Key        string
 	Value      interface{}

@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package config
 
 import (
@@ -29,14 +30,37 @@ func TestGetEnvInstance(t *testing.T) {
 	assert.NotNil(t, instance)
 }
 
-func TestEnvironment_UpdateExternalConfigMap(t *testing.T) {
+func TestEnvironmentUpdateExternalConfigMap(t *testing.T) {
 	GetEnvInstance().UpdateExternalConfigMap(map[string]string{"1": "2"})
 	v, ok := GetEnvInstance().externalConfigMap.Load("1")
 	assert.True(t, ok)
 	assert.Equal(t, "2", v)
+
+	GetEnvInstance().UpdateExternalConfigMap(map[string]string{"a": "b"})
+	v, ok = GetEnvInstance().externalConfigMap.Load("a")
+	assert.True(t, ok)
+	assert.Equal(t, "b", v)
+	v, ok = GetEnvInstance().externalConfigMap.Load("1")
+	assert.False(t, ok)
+	assert.Equal(t, nil, v)
 }
 
-func TestEnvironment_ConfigurationAndGetProperty(t *testing.T) {
+func TestEnvironmentUpdateAppExternalConfigMap(t *testing.T) {
+	GetEnvInstance().UpdateAppExternalConfigMap(map[string]string{"1": "2"})
+	v, ok := GetEnvInstance().appExternalConfigMap.Load("1")
+	assert.True(t, ok)
+	assert.Equal(t, "2", v)
+
+	GetEnvInstance().UpdateAppExternalConfigMap(map[string]string{"a": "b"})
+	v, ok = GetEnvInstance().appExternalConfigMap.Load("a")
+	assert.True(t, ok)
+	assert.Equal(t, "b", v)
+	v, ok = GetEnvInstance().appExternalConfigMap.Load("1")
+	assert.False(t, ok)
+	assert.Equal(t, nil, v)
+}
+
+func TestEnvironmentConfigurationAndGetProperty(t *testing.T) {
 	GetEnvInstance().UpdateExternalConfigMap(map[string]string{"1": "2"})
 	list := GetEnvInstance().Configuration()
 	ok, v := list.Back().Value.(*InmemoryConfiguration).GetProperty("1")
@@ -44,7 +68,7 @@ func TestEnvironment_ConfigurationAndGetProperty(t *testing.T) {
 	assert.Equal(t, "2", v)
 }
 
-func TestInmemoryConfiguration_GetSubProperty(t *testing.T) {
+func TestInmemoryConfigurationGetSubProperty(t *testing.T) {
 	GetEnvInstance().UpdateExternalConfigMap(map[string]string{"123": "2"})
 	list := GetEnvInstance().Configuration()
 	m := list.Front().Value.(*InmemoryConfiguration).GetSubProperty("1")

@@ -18,21 +18,23 @@
 package parser
 
 import (
-	"context"
 	"strconv"
 	"strings"
 )
 
 import (
+	"github.com/dubbogo/gost/log/logger"
+
 	"github.com/magiconair/properties"
+
 	perrors "github.com/pkg/errors"
+
 	"gopkg.in/yaml.v2"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/logger"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
 )
 
 const (
@@ -40,14 +42,16 @@ const (
 	GeneralType      = "general"
 )
 
+// ConfigurationParser interface
 type ConfigurationParser interface {
 	Parse(string) (map[string]string, error)
 	ParseToUrls(content string) ([]*common.URL, error)
 }
 
-//for support properties file in config center
+// DefaultConfigurationParser for supporting properties file in config center
 type DefaultConfigurationParser struct{}
 
+// ConfiguratorConfig defines configurator config
 type ConfiguratorConfig struct {
 	ConfigVersion string       `yaml:"configVersion"`
 	Scope         string       `yaml:"scope"`
@@ -56,6 +60,7 @@ type ConfiguratorConfig struct {
 	Configs       []ConfigItem `yaml:"configs"`
 }
 
+// ConfigItem defines config item
 type ConfigItem struct {
 	Type              string            `yaml:"type"`
 	Enabled           bool              `yaml:"enabled"`
@@ -67,15 +72,17 @@ type ConfigItem struct {
 	Side              string            `yaml:"side"`
 }
 
+// Parse load content
 func (parser *DefaultConfigurationParser) Parse(content string) (map[string]string, error) {
-	properties, err := properties.LoadString(content)
+	pps, err := properties.LoadString(content)
 	if err != nil {
 		logger.Errorf("Parse the content {%v} in DefaultConfigurationParser error ,error message is {%v}", content, err)
 		return nil, err
 	}
-	return properties.Map(), nil
+	return pps.Map(), nil
 }
 
+// ParseToUrls is used to parse content to urls
 func (parser *DefaultConfigurationParser) ParseToUrls(content string) ([]*common.URL, error) {
 	config := ConfiguratorConfig{}
 	if err := yaml.Unmarshal([]byte(content), &config); err != nil {
@@ -103,14 +110,16 @@ func (parser *DefaultConfigurationParser) ParseToUrls(content string) ([]*common
 	}
 	return allUrls, nil
 }
+
+// serviceItemToUrls is used to transfer item and config to urls
 func serviceItemToUrls(item ConfigItem, config ConfiguratorConfig) ([]*common.URL, error) {
-	var addresses = item.Addresses
+	addresses := item.Addresses
 	if len(addresses) == 0 {
-		addresses = append(addresses, constant.ANYHOST_VALUE)
+		addresses = append(addresses, constant.AnyHostValue)
 	}
 	var urls []*common.URL
 	for _, v := range addresses {
-		urlStr := constant.OVERRIDE_PROTOCOL + "://" + v + "/"
+		urlStr := constant.OverrideProtocol + "://" + v + "/"
 		serviceStr, err := getServiceString(config.Key)
 		if err != nil {
 			return nil, perrors.WithStack(err)
@@ -123,7 +132,7 @@ func serviceItemToUrls(item ConfigItem, config ConfiguratorConfig) ([]*common.UR
 		urlStr = urlStr + paramStr
 		urlStr = urlStr + getEnabledString(item, config)
 		urlStr = urlStr + "&category="
-		urlStr = urlStr + constant.DYNAMIC_CONFIGURATORS_CATEGORY
+		urlStr = urlStr + constant.DynamicConfiguratorsCategory
 		urlStr = urlStr + "&configVersion="
 		urlStr = urlStr + config.ConfigVersion
 		apps := item.Applications
@@ -132,33 +141,35 @@ func serviceItemToUrls(item ConfigItem, config ConfiguratorConfig) ([]*common.UR
 				newUrlStr := urlStr
 				newUrlStr = newUrlStr + "&application"
 				newUrlStr = newUrlStr + v
-				url, err := common.NewURL(context.Background(), newUrlStr)
+				url, err := common.NewURL(newUrlStr)
 				if err != nil {
-					perrors.WithStack(err)
+					return nil, perrors.WithStack(err)
 				}
-				urls = append(urls, &url)
+				urls = append(urls, url)
 			}
 		} else {
-			url, err := common.NewURL(context.Background(), urlStr)
+			url, err := common.NewURL(urlStr)
 			if err != nil {
-				perrors.WithStack(err)
+				return nil, perrors.WithStack(err)
 			}
-			urls = append(urls, &url)
+			urls = append(urls, url)
 		}
 	}
 	return urls, nil
 }
+
+// nolint
 func appItemToUrls(item ConfigItem, config ConfiguratorConfig) ([]*common.URL, error) {
-	var addresses = item.Addresses
+	addresses := item.Addresses
 	if len(addresses) == 0 {
-		addresses = append(addresses, constant.ANYHOST_VALUE)
+		addresses = append(addresses, constant.AnyHostValue)
 	}
 	var urls []*common.URL
 	for _, v := range addresses {
-		urlStr := constant.OVERRIDE_PROTOCOL + "://" + v + "/"
+		urlStr := constant.OverrideProtocol + "://" + v + "/"
 		services := item.Services
 		if len(services) == 0 {
-			services = append(services, constant.ANY_VALUE)
+			services = append(services, constant.AnyValue)
 		}
 		for _, vs := range services {
 			serviceStr, err := getServiceString(vs)
@@ -175,19 +186,20 @@ func appItemToUrls(item ConfigItem, config ConfiguratorConfig) ([]*common.URL, e
 			urlStr = urlStr + config.Key
 			urlStr = urlStr + getEnabledString(item, config)
 			urlStr = urlStr + "&category="
-			urlStr = urlStr + constant.APP_DYNAMIC_CONFIGURATORS_CATEGORY
+			urlStr = urlStr + constant.AppDynamicConfiguratorsCategory
 			urlStr = urlStr + "&configVersion="
 			urlStr = urlStr + config.ConfigVersion
-			url, err := common.NewURL(context.Background(), urlStr)
+			url, err := common.NewURL(urlStr)
 			if err != nil {
 				return nil, perrors.WithStack(err)
 			}
-			urls = append(urls, &url)
+			urls = append(urls, url)
 		}
 	}
 	return urls, nil
 }
 
+// getServiceString returns service string
 func getServiceString(service string) (string, error) {
 	if len(service) == 0 {
 		return "", perrors.New("service field in configuration is null.")
@@ -211,10 +223,11 @@ func getServiceString(service string) (string, error) {
 	return serviceStr, nil
 }
 
+// nolint
 func getParamString(item ConfigItem) (string, error) {
 	var retStr string
 	retStr = retStr + "category="
-	retStr = retStr + constant.DYNAMIC_CONFIGURATORS_CATEGORY
+	retStr = retStr + constant.DynamicConfiguratorsCategory
 	if len(item.Side) > 0 {
 		retStr = retStr + "&side="
 		retStr = retStr + item.Side
@@ -225,21 +238,15 @@ func getParamString(item ConfigItem) (string, error) {
 			"you want to change in the rule.")
 	}
 	for k, v := range params {
-		retStr = retStr + "&"
-		retStr = retStr + k
-		retStr = retStr + "="
-		retStr = retStr + v
+		retStr += "&" + k + "=" + v
 	}
 
-	if len(item.ProviderAddresses) >= 0 {
-		retStr = retStr + "&"
-		retStr = retStr + constant.OVERRIDE_PROVIDERS_KEY
-		retStr = retStr + "="
-		retStr = retStr + strings.Join(item.ProviderAddresses, ",")
-	}
+	retStr += "&" + constant.OverrideProvidersKey + "=" + strings.Join(item.ProviderAddresses, ",")
 
 	return retStr, nil
 }
+
+// getEnabledString returns enabled string
 func getEnabledString(item ConfigItem, config ConfiguratorConfig) string {
 	retStr := "&enabled="
 	if len(item.Type) == 0 || item.Type == GeneralType {

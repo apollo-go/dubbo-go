@@ -27,39 +27,80 @@ import (
 )
 
 import (
+	"github.com/dubbogo/gost/log/logger"
+
 	perrors "github.com/pkg/errors"
 )
 
-import (
-	"github.com/apache/dubbo-go/common/logger"
-)
+// RPCService the type alias of interface{}
+type RPCService = interface{}
 
-// rpc service interface
-type RPCService interface {
-	Reference() string // rpc service id or reference id
+// ReferencedRPCService is the rpc service interface which wraps base Reference method.
+//
+// Reference method refers rpc service id or reference id.
+type ReferencedRPCService interface {
+	Reference() string
 }
 
-// for lowercase func
-// func MethodMapper() map[string][string] {
-//     return map[string][string]{}
-// }
-const METHOD_MAPPER = "MethodMapper"
+// TriplePBService is  the type alias of interface{}
+type TriplePBService interface {
+	XXX_InterfaceName() string
+}
+
+// GetReference return the reference id of the service.
+// If the service implemented the ReferencedRPCService interface,
+// it will call the Reference method. If not, it will
+// return the struct name as the reference id.
+func GetReference(service RPCService) string {
+	if s, ok := service.(ReferencedRPCService); ok {
+		return s.Reference()
+	}
+
+	ref := ""
+	sType := reflect.TypeOf(service)
+	kind := sType.Kind()
+	switch kind {
+	case reflect.Struct:
+		ref = sType.Name()
+	case reflect.Ptr:
+		sName := sType.Elem().Name()
+		if sName != "" {
+			ref = sName
+		} else {
+			ref = sType.Elem().Field(0).Name
+		}
+	}
+	return ref
+}
+
+// AsyncCallbackService callback interface for async
+type AsyncCallbackService interface {
+	CallBack(response CallbackResponse)
+}
+
+// CallbackResponse for different protocol
+type CallbackResponse interface{}
+
+// AsyncCallback async callback method
+type AsyncCallback func(response CallbackResponse)
+
+const (
+	METHOD_MAPPER = "MethodMapper"
+)
 
 var (
 	// Precompute the reflect type for error. Can't use error directly
 	// because Typeof takes an empty interface value. This is annoying.
 	typeOfError = reflect.TypeOf((*error)(nil)).Elem()
 
-	// todo: lowerecas?
+	// ServiceMap store description of service.
 	ServiceMap = &serviceMap{
-		serviceMap: make(map[string]map[string]*Service),
+		serviceMap:   make(map[string]map[string]*Service),
+		interfaceMap: make(map[string][]*Service),
 	}
 )
 
-//////////////////////////
-// info of method
-//////////////////////////
-
+// MethodType is description of service method.
 type MethodType struct {
 	method    reflect.Method
 	ctxType   reflect.Type   // request context
@@ -67,29 +108,35 @@ type MethodType struct {
 	replyType reflect.Type   // return value, otherwise it is nil
 }
 
+// Method gets @m.method.
 func (m *MethodType) Method() reflect.Method {
 	return m.method
 }
+
+// CtxType gets @m.ctxType.
 func (m *MethodType) CtxType() reflect.Type {
 	return m.ctxType
 }
+
+// ArgsType gets @m.argsType.
 func (m *MethodType) ArgsType() []reflect.Type {
 	return m.argsType
 }
+
+// ReplyType gets @m.replyType.
 func (m *MethodType) ReplyType() reflect.Type {
 	return m.replyType
 }
+
+// SuiteContext transfers @ctx to reflect.Value type or get it from @m.ctxType.
 func (m *MethodType) SuiteContext(ctx context.Context) reflect.Value {
-	if contextv := reflect.ValueOf(ctx); contextv.IsValid() {
-		return contextv
+	if ctxV := reflect.ValueOf(ctx); ctxV.IsValid() {
+		return ctxV
 	}
 	return reflect.Zero(m.ctxType)
 }
 
-//////////////////////////
-// info of service interface
-//////////////////////////
-
+// Service is description of service
 type Service struct {
 	name     string
 	rcvr     reflect.Value
@@ -97,30 +144,44 @@ type Service struct {
 	methods  map[string]*MethodType
 }
 
+// Method gets @s.methods.
 func (s *Service) Method() map[string]*MethodType {
 	return s.methods
 }
+
+// Name will return service name
+func (s *Service) Name() string {
+	return s.name
+}
+
+// RcvrType gets @s.rcvrType.
 func (s *Service) RcvrType() reflect.Type {
 	return s.rcvrType
 }
+
+// Rcvr gets @s.rcvr.
 func (s *Service) Rcvr() reflect.Value {
 	return s.rcvr
 }
 
-//////////////////////////
-// serviceMap
-//////////////////////////
-
 type serviceMap struct {
-	mutex      sync.RWMutex                   // protects the serviceMap
-	serviceMap map[string]map[string]*Service // protocol -> service name -> service
+	mutex        sync.RWMutex                   // protects the serviceMap
+	serviceMap   map[string]map[string]*Service // protocol -> service name -> service
+	interfaceMap map[string][]*Service          // interface -> service
 }
 
-func (sm *serviceMap) GetService(protocol, name string) *Service {
+// GetService gets a service definition by protocol and name
+func (sm *serviceMap) GetService(protocol, interfaceName, group, version string) *Service {
+	serviceKey := ServiceKey(interfaceName, group, version)
+	return sm.GetServiceByServiceKey(protocol, serviceKey)
+}
+
+// GetServiceByServiceKey gets a service definition by protocol and service key
+func (sm *serviceMap) GetServiceByServiceKey(protocol, serviceKey string) *Service {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	if s, ok := sm.serviceMap[protocol]; ok {
-		if srv, ok := s[name]; ok {
+		if srv, ok := s[serviceKey]; ok {
 			return srv
 		}
 		return nil
@@ -128,9 +189,23 @@ func (sm *serviceMap) GetService(protocol, name string) *Service {
 	return nil
 }
 
-func (sm *serviceMap) Register(protocol string, rcvr RPCService) (string, error) {
+// GetInterface gets an interface definition by interface name
+func (sm *serviceMap) GetInterface(interfaceName string) []*Service {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+	if s, ok := sm.interfaceMap[interfaceName]; ok {
+		return s
+	}
+	return nil
+}
+
+// Register registers a service by @interfaceName and @protocol
+func (sm *serviceMap) Register(interfaceName, protocol, group, version string, rcvr RPCService) (string, error) {
 	if sm.serviceMap[protocol] == nil {
 		sm.serviceMap[protocol] = make(map[string]*Service)
+	}
+	if sm.interfaceMap[interfaceName] == nil {
+		sm.interfaceMap[interfaceName] = make([]*Service, 0, 16)
 	}
 
 	s := new(Service)
@@ -148,8 +223,8 @@ func (sm *serviceMap) Register(protocol string, rcvr RPCService) (string, error)
 		return "", perrors.New(s)
 	}
 
-	sname = rcvr.Reference()
-	if server := sm.GetService(protocol, sname); server != nil {
+	sname = ServiceKey(interfaceName, group, version)
+	if server := sm.GetService(protocol, interfaceName, group, version); server != nil {
 		return "", perrors.New("service already defined: " + sname)
 	}
 	s.name = sname
@@ -166,40 +241,73 @@ func (sm *serviceMap) Register(protocol string, rcvr RPCService) (string, error)
 	}
 	sm.mutex.Lock()
 	sm.serviceMap[protocol][s.name] = s
+	sm.interfaceMap[interfaceName] = append(sm.interfaceMap[interfaceName], s)
 	sm.mutex.Unlock()
 
 	return strings.TrimSuffix(methods, ","), nil
 }
 
-func (sm *serviceMap) UnRegister(protocol, serviceId string) error {
-	if protocol == "" || serviceId == "" {
-		return perrors.New("protocol or serviceName is nil")
+// UnRegister cancels a service by @interfaceName, @protocol and @serviceId
+func (sm *serviceMap) UnRegister(interfaceName, protocol, serviceKey string) error {
+	if protocol == "" || serviceKey == "" {
+		return perrors.New("protocol or ServiceKey is nil")
 	}
-	sm.mutex.RLock()
-	svcs, ok := sm.serviceMap[protocol]
-	if !ok {
-		sm.mutex.RUnlock()
-		return perrors.New("no services for " + protocol)
+
+	var (
+		err   error
+		index = -1
+		svcs  map[string]*Service
+		svrs  []*Service
+		ok    bool
+	)
+
+	f := func() error {
+		sm.mutex.RLock()
+		defer sm.mutex.RUnlock()
+		svcs, ok = sm.serviceMap[protocol]
+		if !ok {
+			return perrors.New("no services for " + protocol)
+		}
+		s, ok := svcs[serviceKey]
+		if !ok {
+			return perrors.New("no service for " + serviceKey)
+		}
+		svrs, ok = sm.interfaceMap[interfaceName]
+		if !ok {
+			return perrors.New("no service for " + interfaceName)
+		}
+		for i, svr := range svrs {
+			if svr == s {
+				index = i
+			}
+		}
+		return nil
 	}
-	_, ok = svcs[serviceId]
-	if !ok {
-		sm.mutex.RUnlock()
-		return perrors.New("no service for " + serviceId)
+
+	if err = f(); err != nil {
+		return err
 	}
-	sm.mutex.RUnlock()
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-	delete(svcs, serviceId)
-	delete(sm.serviceMap, protocol)
+	sm.interfaceMap[interfaceName] = make([]*Service, 0, len(svrs))
+	for i := range svrs {
+		if i != index {
+			sm.interfaceMap[interfaceName] = append(sm.interfaceMap[interfaceName], svrs[i])
+		}
+	}
+	delete(svcs, serviceKey)
+	if len(sm.serviceMap[protocol]) == 0 {
+		delete(sm.serviceMap, protocol)
+	}
 
 	return nil
 }
 
 // Is this an exported - upper case - name
 func isExported(name string) bool {
-	rune, _ := utf8.DecodeRuneInString(name)
-	return unicode.IsUpper(rune)
+	s, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(s)
 }
 
 // Is this type exported or a builtin?
@@ -254,6 +362,13 @@ func suiteMethod(method reflect.Method) *MethodType {
 		argsType           []reflect.Type
 	)
 
+	// Reference is used to define service reference, and method with prefix 'XXX' is generated by triple pb tool.
+	// SetGRPCServer is used for pb reflection.
+	// They should not to be checked.
+	if mname == "Reference" || mname == "SetGRPCServer" || strings.HasPrefix(mname, "XXX") {
+		return nil
+	}
+
 	if outNum != 1 && outNum != 2 {
 		logger.Warnf("method %s of mtype %v has wrong number of in out parameters %d; needs exactly 1/2",
 			mname, mtype.String(), outNum)
@@ -262,7 +377,7 @@ func suiteMethod(method reflect.Method) *MethodType {
 
 	// The latest return type of the method must be error.
 	if returnType := mtype.Out(outNum - 1); returnType != typeOfError {
-		logger.Warnf("the latest return type %s of method %q is not error", returnType, mname)
+		logger.Debugf(`"%s" method will not be exported because its last return type %v doesn't have error`, mname, returnType)
 		return nil
 	}
 

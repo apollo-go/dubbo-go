@@ -18,70 +18,74 @@
 package protocolwrapper
 
 import (
+	"context"
 	"net/url"
 	"testing"
 )
 
 import (
+	"github.com/dubbogo/gost/log/logger"
+
 	"github.com/stretchr/testify/assert"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/extension"
-	"github.com/apache/dubbo-go/common/logger"
-	"github.com/apache/dubbo-go/filter"
-	"github.com/apache/dubbo-go/protocol"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/extension"
+	"dubbo.apache.org/dubbo-go/v3/filter"
+	"dubbo.apache.org/dubbo-go/v3/protocol"
 )
 
-func TestProtocolFilterWrapper_Export(t *testing.T) {
+const mockFilterKey = "mockEcho"
+
+func TestProtocolFilterWrapperExport(t *testing.T) {
 	filtProto := extension.GetProtocol(FILTER)
 	filtProto.(*ProtocolFilterWrapper).protocol = &protocol.BaseProtocol{}
 
 	u := common.NewURLWithOptions(
 		common.WithParams(url.Values{}),
-		common.WithParamsValue(constant.SERVICE_FILTER_KEY, "echo"))
-	exporter := filtProto.Export(protocol.NewBaseInvoker(*u))
+		common.WithParamsValue(constant.ServiceFilterKey, mockFilterKey))
+	exporter := filtProto.Export(protocol.NewBaseInvoker(u))
 	_, ok := exporter.GetInvoker().(*FilterInvoker)
 	assert.True(t, ok)
 }
 
-func TestProtocolFilterWrapper_Refer(t *testing.T) {
+func TestProtocolFilterWrapperRefer(t *testing.T) {
 	filtProto := extension.GetProtocol(FILTER)
 	filtProto.(*ProtocolFilterWrapper).protocol = &protocol.BaseProtocol{}
 
 	u := common.NewURLWithOptions(
 		common.WithParams(url.Values{}),
-		common.WithParamsValue(constant.REFERENCE_FILTER_KEY, "echo"))
-	invoker := filtProto.Refer(*u)
+		common.WithParamsValue(constant.ReferenceFilterKey, mockFilterKey))
+	invoker := filtProto.Refer(u)
 	_, ok := invoker.(*FilterInvoker)
 	assert.True(t, ok)
 }
 
-//the same as echo filter, for test
+// The initialization of mockEchoFilter, for test
 func init() {
-	extension.SetFilter("echo", GetFilter)
+	extension.SetFilter(mockFilterKey, newFilter)
 }
 
-type EchoFilterForTest struct{}
+type mockEchoFilter struct{}
 
-func (ef *EchoFilterForTest) Invoke(invoker protocol.Invoker, invocation protocol.Invocation) protocol.Result {
+func (ef *mockEchoFilter) Invoke(ctx context.Context, invoker protocol.Invoker, invocation protocol.Invocation) protocol.Result {
 	logger.Infof("invoking echo filter.")
 	logger.Debugf("%v,%v", invocation.MethodName(), len(invocation.Arguments()))
-	if invocation.MethodName() == constant.ECHO && len(invocation.Arguments()) == 1 {
+	if invocation.MethodName() == constant.Echo && len(invocation.Arguments()) == 1 {
 		return &protocol.RPCResult{
 			Rest: invocation.Arguments()[0],
 		}
 	}
 
-	return invoker.Invoke(invocation)
+	return invoker.Invoke(ctx, invocation)
 }
 
-func (ef *EchoFilterForTest) OnResponse(result protocol.Result, invoker protocol.Invoker, invocation protocol.Invocation) protocol.Result {
+func (ef *mockEchoFilter) OnResponse(ctx context.Context, result protocol.Result, invoker protocol.Invoker, invocation protocol.Invocation) protocol.Result {
 	return result
 }
 
-func GetFilter() filter.Filter {
-	return &EchoFilterForTest{}
+func newFilter() filter.Filter {
+	return &mockEchoFilter{}
 }

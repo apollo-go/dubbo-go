@@ -18,62 +18,105 @@
 package config
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
+	"github.com/go-playground/validator/v10"
+
+	"github.com/pkg/errors"
 )
+
+import (
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/extension"
+)
+
+var validate *validator.Validate
+
+func init() {
+	validate = validator.New()
+}
 
 func mergeValue(str1, str2, def string) string {
 	if str1 == "" && str2 == "" {
 		return def
 	}
-	str := "," + strings.Trim(str1, ",")
-	if str1 == "" {
-		str = "," + strings.Trim(str2, ",")
-	} else if str2 != "" {
-		str = str + "," + strings.Trim(str2, ",")
-	}
-	defKey := strings.Contains(str, ","+constant.DEFAULT_KEY)
+	s1 := strings.Split(str1, ",")
+	s2 := strings.Split(str2, ",")
+	str := "," + strings.Join(append(s1, s2...), ",")
+	defKey := strings.Contains(str, ","+constant.DefaultKey)
 	if !defKey {
-		str = "," + constant.DEFAULT_KEY + str
+		str = "," + constant.DefaultKey + str
 	}
-	str = strings.TrimPrefix(strings.Replace(str, ","+constant.DEFAULT_KEY, ","+def, -1), ",")
+	str = strings.TrimPrefix(strings.Replace(str, ","+constant.DefaultKey, ","+def, -1), ",")
+	return removeMinus(strings.Split(str, ","))
+}
 
-	strArr := strings.Split(str, ",")
-	strMap := make(map[string][]int)
-	for k, v := range strArr {
-		add := true
+func removeMinus(strArr []string) string {
+	if len(strArr) == 0 {
+		return ""
+	}
+	var normalStr string
+	var minusStrArr []string
+	for _, v := range strArr {
 		if strings.HasPrefix(v, "-") {
-			v = v[1:]
-			add = false
-		}
-		if _, ok := strMap[v]; !ok {
-			if add {
-				strMap[v] = []int{1, k}
-			}
+			minusStrArr = append(minusStrArr, v[1:])
 		} else {
-			if add {
-				strMap[v][0] += 1
-				strMap[v] = append(strMap[v], k)
-			} else {
-				strMap[v][0] -= 1
-				strMap[v] = strMap[v][:len(strMap[v])-1]
-			}
+			normalStr += fmt.Sprintf(",%s", v)
 		}
 	}
-	strArr = make([]string, len(strArr))
-	for key, value := range strMap {
-		if value[0] == 0 {
-			continue
-		}
-		for i := 1; i < len(value); i++ {
-			strArr[value[i]] = key
-		}
+	normalStr = strings.Trim(normalStr, ",")
+	for _, v := range minusStrArr {
+		normalStr = strings.Replace(normalStr, v, "", 1)
 	}
 	reg := regexp.MustCompile("[,]+")
-	str = reg.ReplaceAllString(strings.Join(strArr, ","), ",")
-	return strings.Trim(str, ",")
+	normalStr = reg.ReplaceAllString(strings.Trim(normalStr, ","), ",")
+	return normalStr
+}
+
+// removeDuplicateElement remove duplicate element
+func removeDuplicateElement(items []string) []string {
+	result := make([]string, 0, len(items))
+	temp := map[string]struct{}{}
+	for _, item := range items {
+		if _, ok := temp[item]; !ok && item != "" {
+			temp[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// translateIds string "nacos,zk" => ["nacos","zk"]
+func translateIds(registryIds []string) []string {
+	ids := make([]string, 0)
+	for _, id := range registryIds {
+
+		ids = append(ids, strings.Split(id, ",")...)
+	}
+	return removeDuplicateElement(ids)
+}
+
+func verify(s interface{}) error {
+	if err := validate.Struct(s); err != nil {
+		errs := err.(validator.ValidationErrors)
+		var slice []string
+		for _, msg := range errs {
+			slice = append(slice, msg.Error())
+		}
+		return errors.New(strings.Join(slice, ","))
+	}
+	return nil
+}
+
+// clientNameID unique identifier id for client
+func clientNameID(config extension.Config, protocol, address string) string {
+	return strings.Join([]string{config.Prefix(), protocol, address}, "-")
+}
+
+func isValid(addr string) bool {
+	return addr != "" && addr != constant.NotAvailable
 }

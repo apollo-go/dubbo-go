@@ -22,28 +22,41 @@ import (
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/protocol"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/protocol"
 )
 
+// GetWeight gets weight for load balance strategy
 func GetWeight(invoker protocol.Invoker, invocation protocol.Invocation) int64 {
-	url := invoker.GetUrl()
-	weight := url.GetMethodParamInt64(invocation.MethodName(), constant.WEIGHT_KEY, constant.DEFAULT_WEIGHT)
+	var weight int64
+	url := invoker.GetURL()
+	// Multiple registry scenario, load balance among multiple registries.
+	isRegIvk := url.GetParamBool(constant.RegistryKey+"."+constant.RegistryLabelKey, false)
+	if isRegIvk {
+		weight = url.GetParamInt(constant.RegistryKey+"."+constant.WeightKey, constant.DefaultWeight)
+	} else {
+		weight = url.GetMethodParamInt64(invocation.MethodName(), constant.WeightKey, constant.DefaultWeight)
 
-	if weight > 0 {
-		//get service register time an do warm up time
-		now := time.Now().Unix()
-		timestamp := url.GetParamInt(constant.REMOTE_TIMESTAMP_KEY, now)
-		if uptime := now - timestamp; uptime > 0 {
-			warmup := url.GetParamInt(constant.WARMUP_KEY, constant.DEFAULT_WARMUP)
-			if uptime < warmup {
-				if ww := float64(uptime) / float64(warmup) / float64(weight); ww < 1 {
-					weight = 1
-				} else if int64(ww) <= weight {
-					weight = int64(ww)
+		if weight > 0 {
+			// get service register time an do warm up time
+			now := time.Now().Unix()
+			timestamp := url.GetParamInt(constant.RemoteTimestampKey, now)
+			if uptime := now - timestamp; uptime > 0 {
+				warmup := url.GetParamInt(constant.WarmupKey, constant.DefaultWarmup)
+				if uptime < warmup {
+					if ww := float64(uptime) / float64(warmup) / float64(weight); ww < 1 {
+						weight = 1
+					} else if int64(ww) <= weight {
+						weight = int64(ww)
+					}
 				}
 			}
 		}
 	}
+
+	if weight < 0 {
+		weight = 0
+	}
+
 	return weight
 }

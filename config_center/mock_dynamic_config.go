@@ -22,26 +22,34 @@ import (
 )
 
 import (
+	gxset "github.com/dubbogo/gost/container/set"
+
 	"gopkg.in/yaml.v2"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/config_center/parser"
-	"github.com/apache/dubbo-go/remoting"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/config_center/parser"
+	"dubbo.apache.org/dubbo-go/v3/remoting"
 )
 
+// MockDynamicConfigurationFactory defines content
 type MockDynamicConfigurationFactory struct {
 	Content string
 }
+
+const (
+	mockServiceName = "org.apache.dubbo-go.mockService"
+)
 
 var (
 	once                 sync.Once
 	dynamicConfiguration *MockDynamicConfiguration
 )
 
-func (f *MockDynamicConfigurationFactory) GetDynamicConfiguration(url *common.URL) (DynamicConfiguration, error) {
+// GetDynamicConfiguration returns a DynamicConfiguration
+func (f *MockDynamicConfigurationFactory) GetDynamicConfiguration(_ *common.URL) (DynamicConfiguration, error) {
 	var err error
 	once.Do(func() {
 		dynamicConfiguration = &MockDynamicConfiguration{listener: map[string]ConfigurationListener{}}
@@ -76,77 +84,113 @@ func (f *MockDynamicConfigurationFactory) GetDynamicConfiguration(url *common.UR
 		dynamicConfiguration.content = f.Content
 	}
 	return dynamicConfiguration, err
-
 }
 
+// PublishConfig will publish the config with the (key, group, value) pair
+func (c *MockDynamicConfiguration) PublishConfig(string, string, string) error {
+	return nil
+}
+
+// GetConfigKeysByGroup will return all keys with the group
+func (c *MockDynamicConfiguration) GetConfigKeysByGroup(group string) (*gxset.HashSet, error) {
+	return gxset.NewSet(c.content), nil
+}
+
+// MockDynamicConfiguration uses to parse content and defines listener
 type MockDynamicConfiguration struct {
+	BaseDynamicConfiguration
 	parser   parser.ConfigurationParser
 	content  string
 	listener map[string]ConfigurationListener
 }
 
-func (c *MockDynamicConfiguration) AddListener(key string, listener ConfigurationListener, opions ...Option) {
+// AddListener adds a listener for MockDynamicConfiguration
+func (c *MockDynamicConfiguration) AddListener(key string, listener ConfigurationListener, _ ...Option) {
 	c.listener[key] = listener
 }
 
-func (c *MockDynamicConfiguration) RemoveListener(key string, listener ConfigurationListener, opions ...Option) {
+// RemoveListener removes the listener for MockDynamicConfiguration
+func (c *MockDynamicConfiguration) RemoveListener(_ string, _ ConfigurationListener, _ ...Option) {
+	// mock remove
 }
 
-func (c *MockDynamicConfiguration) GetConfig(key string, opts ...Option) (string, error) {
-
+// GetConfig returns content of MockDynamicConfiguration
+func (c *MockDynamicConfiguration) GetConfig(_ string, _ ...Option) (string, error) {
 	return c.content, nil
 }
 
-//For zookeeper, getConfig and getConfigs have the same meaning.
+// GetConfigs For zookeeper, getConfig and getConfigs have the same meaning.
 func (c *MockDynamicConfiguration) GetConfigs(key string, opts ...Option) (string, error) {
 	return c.GetConfig(key, opts...)
 }
 
+// Parser returns a parser of MockDynamicConfiguration
 func (c *MockDynamicConfiguration) Parser() parser.ConfigurationParser {
 	return c.parser
 }
+
+// SetParser sets parser of MockDynamicConfiguration
 func (c *MockDynamicConfiguration) SetParser(p parser.ConfigurationParser) {
 	c.parser = p
 }
 
+// GetProperties gets content of MockDynamicConfiguration
+func (c *MockDynamicConfiguration) GetProperties(_ string, _ ...Option) (string, error) {
+	return c.content, nil
+}
+
+// GetInternalProperty For zookeeper, getConfig and getConfigs have the same meaning.
+func (c *MockDynamicConfiguration) GetInternalProperty(key string, opts ...Option) (string, error) {
+	return c.GetProperties(key, opts...)
+}
+
+// GetRule gets properties of MockDynamicConfiguration
+func (c *MockDynamicConfiguration) GetRule(key string, opts ...Option) (string, error) {
+	return c.GetProperties(key, opts...)
+}
+
+// MockServiceConfigEvent returns ConfiguratorConfig
 func (c *MockDynamicConfiguration) MockServiceConfigEvent() {
 	config := &parser.ConfiguratorConfig{
 		ConfigVersion: "2.7.1",
 		Scope:         parser.GeneralType,
-		Key:           "org.apache.dubbo-go.mockService",
+		Key:           mockServiceName,
 		Enabled:       true,
 		Configs: []parser.ConfigItem{
-			{Type: parser.GeneralType,
+			{
+				Type:       parser.GeneralType,
 				Enabled:    true,
 				Addresses:  []string{"0.0.0.0"},
-				Services:   []string{"org.apache.dubbo-go.mockService"},
+				Services:   []string{mockServiceName},
 				Side:       "provider",
 				Parameters: map[string]string{"cluster": "mock1"},
 			},
 		},
 	}
 	value, _ := yaml.Marshal(config)
-	key := "group*org.apache.dubbo-go.mockService:1.0.0" + constant.CONFIGURATORS_SUFFIX
+	key := "group*" + mockServiceName + ":1.0.0" + constant.ConfiguratorSuffix
 	c.listener[key].Process(&ConfigChangeEvent{Key: key, Value: string(value), ConfigType: remoting.EventTypeAdd})
 }
 
+// MockApplicationConfigEvent returns ConfiguratorConfig
 func (c *MockDynamicConfiguration) MockApplicationConfigEvent() {
 	config := &parser.ConfiguratorConfig{
 		ConfigVersion: "2.7.1",
 		Scope:         parser.ScopeApplication,
-		Key:           "org.apache.dubbo-go.mockService",
+		Key:           mockServiceName,
 		Enabled:       true,
 		Configs: []parser.ConfigItem{
-			{Type: parser.ScopeApplication,
+			{
+				Type:       parser.ScopeApplication,
 				Enabled:    true,
 				Addresses:  []string{"0.0.0.0"},
-				Services:   []string{"org.apache.dubbo-go.mockService"},
+				Services:   []string{mockServiceName},
 				Side:       "provider",
 				Parameters: map[string]string{"cluster": "mock1"},
 			},
 		},
 	}
 	value, _ := yaml.Marshal(config)
-	key := "test-application" + constant.CONFIGURATORS_SUFFIX
+	key := "test-application" + constant.ConfiguratorSuffix
 	c.listener[key].Process(&ConfigChangeEvent{Key: key, Value: string(value), ConfigType: remoting.EventTypeAdd})
 }

@@ -33,48 +33,47 @@ import (
 )
 
 import (
+	"github.com/dubbogo/gost/log/logger"
+
+	"github.com/opentracing/opentracing-go"
+
 	perrors "github.com/pkg/errors"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
 )
 
-//////////////////////////////////////////////
-// Request
-//////////////////////////////////////////////
-
+// Request is HTTP protocol request
 type Request struct {
-	ID          int64
-	group       string
-	protocol    string
-	version     string
-	service     string
-	method      string
-	args        interface{}
-	contentType string
+	ID       int64
+	group    string
+	protocol string
+	version  string
+	service  string
+	method   string
+	args     interface{}
 }
 
-//////////////////////////////////////////////
-// HTTP Client
-//////////////////////////////////////////////
-
+// HTTPOptions is a HTTP option include HandshakeTimeout and HTTPTimeout.
 type HTTPOptions struct {
 	HandshakeTimeout time.Duration
 	HTTPTimeout      time.Duration
 }
 
 var defaultHTTPOptions = HTTPOptions{
-	HandshakeTimeout: 3e9,
-	HTTPTimeout:      3e9,
+	HandshakeTimeout: 3 * time.Second,
+	HTTPTimeout:      3 * time.Second,
 }
 
+// HTTPClient is a HTTP client ,include ID and options.
 type HTTPClient struct {
 	ID      int64
 	options HTTPOptions
 }
 
+// NewHTTPClient creates a new HTTP client with HTTPOptions.
 func NewHTTPClient(opt *HTTPOptions) *HTTPClient {
 	if opt == nil {
 		opt = &defaultHTTPOptions
@@ -94,20 +93,21 @@ func NewHTTPClient(opt *HTTPOptions) *HTTPClient {
 	}
 }
 
-func (c *HTTPClient) NewRequest(service common.URL, method string, args interface{}) *Request {
-
+// NewRequest creates a new HTTP request with @service ,@method and @arguments.
+func (c *HTTPClient) NewRequest(service *common.URL, method string, args interface{}) *Request {
 	return &Request{
 		ID:       atomic.AddInt64(&c.ID, 1),
-		group:    service.GetParam(constant.GROUP_KEY, ""),
+		group:    service.GetParam(constant.GroupKey, ""),
 		protocol: service.Protocol,
-		version:  service.GetParam(constant.VERSION_KEY, ""),
+		version:  service.GetParam(constant.VersionKey, ""),
 		service:  service.Path,
 		method:   method,
 		args:     args,
 	}
 }
 
-func (c *HTTPClient) Call(ctx context.Context, service common.URL, req *Request, rsp interface{}) error {
+// Call makes a HTTP call with @ctx , @service ,@req and @rsp
+func (c *HTTPClient) Call(ctx context.Context, service *common.URL, req *Request, rsp interface{}) error {
 	// header
 	httpHeader := http.Header{}
 	httpHeader.Set("Content-Type", "application/json")
@@ -115,12 +115,19 @@ func (c *HTTPClient) Call(ctx context.Context, service common.URL, req *Request,
 
 	reqTimeout := c.options.HTTPTimeout
 	if reqTimeout <= 0 {
-		reqTimeout = 1e8
+		reqTimeout = 100 * time.Millisecond
 	}
 	httpHeader.Set("Timeout", reqTimeout.String())
-	if md, ok := ctx.Value(constant.DUBBOGO_CTX_KEY).(map[string]string); ok {
+	if md, ok := ctx.Value(constant.DubboGoCtxKey).(map[string]string); ok {
 		for k := range md {
 			httpHeader.Set(k, md[k])
+		}
+	}
+
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		err := opentracing.GlobalTracer().Inject(span.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(httpHeader))
+		if err != nil {
+			logger.Error("Could not inject the Context into http header.")
 		}
 	}
 
@@ -144,7 +151,7 @@ func (c *HTTPClient) Call(ctx context.Context, service common.URL, req *Request,
 	return perrors.WithStack(codec.Read(rspBody, rsp))
 }
 
-// !!The high level of complexity and the likelihood that the fasthttp client has not been extensively used
+// Do is the high level of complexity and the likelihood that the fasthttp client has not been extensively used
 // in production means that you would need to expect a very large benefit to justify the adoption of fasthttp today.
 func (c *HTTPClient) Do(addr, path string, httpHeader http.Header, body []byte) ([]byte, error) {
 	u := url.URL{Host: strings.TrimSuffix(addr, ":"), Path: path}
@@ -156,7 +163,7 @@ func (c *HTTPClient) Do(addr, path string, httpHeader http.Header, body []byte) 
 	httpReq.Close = true
 
 	reqBuf := bytes.NewBuffer(make([]byte, 0))
-	if err := httpReq.Write(reqBuf); err != nil {
+	if err = httpReq.Write(reqBuf); err != nil {
 		return nil, perrors.WithStack(err)
 	}
 
@@ -165,17 +172,19 @@ func (c *HTTPClient) Do(addr, path string, httpHeader http.Header, body []byte) 
 		return nil, perrors.WithStack(err)
 	}
 	defer tcpConn.Close()
-	setNetConnTimeout := func(conn net.Conn, timeout time.Duration) {
+	setNetConnTimeout := func(conn net.Conn, timeout time.Duration) error {
 		t := time.Time{}
 		if timeout > time.Duration(0) {
 			t = time.Now().Add(timeout)
 		}
 
-		conn.SetDeadline(t)
+		return conn.SetDeadline(t)
 	}
-	setNetConnTimeout(tcpConn, c.options.HTTPTimeout)
+	if err = setNetConnTimeout(tcpConn, c.options.HTTPTimeout); err != nil {
+		return nil, err
+	}
 
-	if _, err := reqBuf.WriteTo(tcpConn); err != nil {
+	if _, err = reqBuf.WriteTo(tcpConn); err != nil {
 		return nil, perrors.WithStack(err)
 	}
 

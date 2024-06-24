@@ -41,3 +41,43 @@ func TestMergeValue(t *testing.T) {
 	str = mergeValue("", "default,-b,e,f", "a,b")
 	assert.Equal(t, "a,e,f", str)
 }
+
+func TestRemoveMinus(t *testing.T) {
+	strList := removeMinus([]string{})
+	assert.Equal(t, strList, "")
+
+	strList = removeMinus([]string{"a", "b", "c", "d", "-a"})
+	assert.Equal(t, strList, "b,c,d")
+
+	strList = removeMinus([]string{"a", "b", "c", "d", "-a", "-b"})
+	assert.Equal(t, strList, "c,d")
+
+	strList = removeMinus([]string{"a", "b", "c", "-c", "-a", "-b"})
+	assert.Equal(t, strList, "")
+
+	strList = removeMinus([]string{"b", "a", "-c", "c"})
+	assert.Equal(t, strList, "b,a")
+
+	strList = removeMinus([]string{"c", "b", "a", "d", "c", "-c", "-a", "e", "f"})
+	assert.Equal(t, strList, "b,d,c,e,f")
+}
+
+type mockConfig struct {
+	protocol string
+	address  string
+}
+
+func (m *mockConfig) Prefix() string {
+	return "mock"
+}
+
+func TestClientNameID(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		m := &mockConfig{"nacos", "127.0.0.1:8848"}
+		assert.Equal(t, "mock-nacos-127.0.0.1:8848", clientNameID(m, m.protocol, m.address))
+	})
+	t.Run("protocolIsNil", func(t *testing.T) {
+		m := &mockConfig{}
+		assert.Equal(t, "mock--", clientNameID(m, m.protocol, m.address))
+	})
+}

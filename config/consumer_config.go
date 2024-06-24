@@ -14,138 +14,244 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package config
 
 import (
-	"context"
-	"io/ioutil"
-	"path"
+	"fmt"
 	"time"
 )
 
 import (
 	"github.com/creasty/defaults"
-	perrors "github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
+
+	"github.com/dubbogo/gost/log/logger"
+
+	tripleConstant "github.com/dubbogo/triple/pkg/common/constant"
 )
 
 import (
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/logger"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
 )
 
-/////////////////////////
-// consumerConfig
-/////////////////////////
+const (
+	MaxWheelTimeSpan = 900e9 // 900s, 15 minute
+)
 
+// ConsumerConfig is Consumer default configuration
 type ConsumerConfig struct {
-	BaseConfig `yaml:",inline"`
-	Filter     string `yaml:"filter" json:"filter,omitempty" property:"filter"`
-	// application
-	ApplicationConfig *ApplicationConfig `yaml:"application" json:"application,omitempty" property:"application"`
-	// client
-	Connect_Timeout string `default:"100ms"  yaml:"connect_timeout" json:"connect_timeout,omitempty" property:"connect_timeout"`
-	ConnectTimeout  time.Duration
-
-	Request_Timeout string `yaml:"request_timeout" default:"5s" json:"request_timeout,omitempty" property:"request_timeout"`
-	RequestTimeout  time.Duration
-	ProxyFactory    string `yaml:"proxy_factory" default:"default" json:"proxy_factory,omitempty" property:"proxy_factory"`
-	Check           *bool  `yaml:"check"  json:"check,omitempty" property:"check"`
-
-	Registry     *RegistryConfig             `yaml:"registry" json:"registry,omitempty" property:"registry"`
-	Registries   map[string]*RegistryConfig  `yaml:"registries" json:"registries,omitempty" property:"registries"`
-	References   map[string]*ReferenceConfig `yaml:"references" json:"references,omitempty" property:"references"`
-	ProtocolConf interface{}                 `yaml:"protocol_conf" json:"protocol_conf,omitempty" property:"protocol_conf"`
-	FilterConf   interface{}                 `yaml:"filter_conf" json:"filter_conf,omitempty" property:"filter_conf" `
+	Filter                         string                      `yaml:"filter" json:"filter,omitempty" property:"filter"`
+	RegistryIDs                    []string                    `yaml:"registry-ids" json:"registry-ids,omitempty" property:"registry-ids"`
+	Protocol                       string                      `yaml:"protocol" json:"protocol,omitempty" property:"protocol"`
+	RequestTimeout                 string                      `default:"3s" yaml:"request-timeout" json:"request-timeout,omitempty" property:"request-timeout"`
+	ProxyFactory                   string                      `default:"default" yaml:"proxy" json:"proxy,omitempty" property:"proxy"`
+	Check                          bool                        `yaml:"check" json:"check,omitempty" property:"check"`
+	AdaptiveService                bool                        `default:"false" yaml:"adaptive-service" json:"adaptive-service" property:"adaptive-service"`
+	References                     map[string]*ReferenceConfig `yaml:"references" json:"references,omitempty" property:"references"`
+	TracingKey                     string                      `yaml:"tracing-key" json:"tracing-key" property:"tracing-key"`
+	FilterConf                     interface{}                 `yaml:"filter-conf" json:"filter-conf,omitempty" property:"filter-conf"`
+	MaxWaitTimeForServiceDiscovery string                      `default:"3s" yaml:"max-wait-time-for-service-discovery" json:"max-wait-time-for-service-discovery,omitempty" property:"max-wait-time-for-service-discovery"`
+	rootConfig                     *RootConfig
 }
 
-func (c *ConsumerConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	if err := defaults.Set(c); err != nil {
-		return err
-	}
-	type plain ConsumerConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (*ConsumerConfig) Prefix() string {
+// Prefix dubbo.consumer
+func (ConsumerConfig) Prefix() string {
 	return constant.ConsumerConfigPrefix
 }
 
-func SetConsumerConfig(c ConsumerConfig) {
-	consumerConfig = &c
-}
-
-func GetConsumerConfig() ConsumerConfig {
-	if consumerConfig == nil {
-		logger.Warnf("consumerConfig is nil!")
-		return ConsumerConfig{}
+func (cc *ConsumerConfig) Init(rc *RootConfig) error {
+	if cc == nil {
+		return nil
 	}
-	return *consumerConfig
-}
-
-func ConsumerInit(confConFile string) error {
-	if confConFile == "" {
-		return perrors.Errorf("application configure(consumer) file name is nil")
+	cc.RegistryIDs = translateIds(cc.RegistryIDs)
+	if len(cc.RegistryIDs) <= 0 {
+		cc.RegistryIDs = rc.getRegistryIds()
 	}
-
-	if path.Ext(confConFile) != ".yml" {
-		return perrors.Errorf("application configure file name{%v} suffix must be .yml", confConFile)
-	}
-
-	confFileStream, err := ioutil.ReadFile(confConFile)
-	if err != nil {
-		return perrors.Errorf("ioutil.ReadFile(file:%s) = error:%v", confConFile, perrors.WithStack(err))
-	}
-	consumerConfig = &ConsumerConfig{}
-	err = yaml.Unmarshal(confFileStream, consumerConfig)
-	if err != nil {
-		return perrors.Errorf("yaml.Unmarshal() = error:%v", perrors.WithStack(err))
-	}
-
-	//set method interfaceId & interfaceName
-	for k, v := range consumerConfig.References {
-		//set id for reference
-		for _, n := range consumerConfig.References[k].Methods {
-			n.InterfaceName = v.InterfaceName
-			n.InterfaceId = k
+	if cc.TracingKey == "" && len(rc.Tracing) > 0 {
+		for k, _ := range rc.Tracing {
+			cc.TracingKey = k
+			break
 		}
 	}
-	if consumerConfig.Request_Timeout != "" {
-		if consumerConfig.RequestTimeout, err = time.ParseDuration(consumerConfig.Request_Timeout); err != nil {
-			return perrors.WithMessagef(err, "time.ParseDuration(Request_Timeout{%#v})", consumerConfig.Request_Timeout)
+	for key, referenceConfig := range cc.References {
+		if referenceConfig.InterfaceName == "" {
+			reference := GetConsumerService(key)
+			// try to use interface name defined by pb
+			triplePBService, ok := reference.(common.TriplePBService)
+			if !ok {
+				logger.Errorf("Dubbo-go cannot get interface name with reference = %s."+
+					"Please run the command 'go install github.com/dubbogo/dubbogo-cli/cmd/protoc-gen-go-triple@latest' to get the latest "+
+					"protoc-gen-go-triple,  and then re-generate your pb file again by this tool."+
+					"If you are not using pb serialization, please set 'interfaceName' field in reference config to let dubbogo get the interface name.", key)
+				continue
+			} else {
+				// use interface name defined by pb
+				referenceConfig.InterfaceName = triplePBService.XXX_InterfaceName()
+			}
+		}
+		if err := referenceConfig.Init(rc); err != nil {
+			return err
 		}
 	}
-	if consumerConfig.Connect_Timeout != "" {
-		if consumerConfig.ConnectTimeout, err = time.ParseDuration(consumerConfig.Connect_Timeout); err != nil {
-			return perrors.WithMessagef(err, "time.ParseDuration(Connect_Timeout{%#v})", consumerConfig.Connect_Timeout)
-		}
+	if err := defaults.Set(cc); err != nil {
+		return err
 	}
-	logger.Debugf("consumer config{%#v}\n", consumerConfig)
+	if err := verify(cc); err != nil {
+		return err
+	}
+
+	cc.rootConfig = rc
 	return nil
 }
 
-func configCenterRefreshConsumer() error {
-	//fresh it
-	var err error
-	if consumerConfig.ConfigCenterConfig != nil {
-		consumerConfig.SetFatherConfig(consumerConfig)
-		if err := consumerConfig.startConfigCenter(context.Background()); err != nil {
-			return perrors.Errorf("start config center error , error message is {%v}", perrors.WithStack(err))
+func (cc *ConsumerConfig) Load() {
+	for registeredTypeName, refRPCService := range GetConsumerServiceMap() {
+		refConfig, ok := cc.References[registeredTypeName]
+		if !ok {
+			// not found configuration, now new a configuration with default.
+			refConfig = NewReferenceConfigBuilder().SetProtocol(tripleConstant.TRIPLE).Build()
+			triplePBService, ok := refRPCService.(common.TriplePBService)
+			if !ok {
+				logger.Errorf("Dubbo-go cannot get interface name with registeredTypeName = %s."+
+					"Please run the command 'go install github.com/dubbogo/dubbogo-cli/cmd/protoc-gen-go-triple@latest' to get the latest "+
+					"protoc-gen-go-triple,  and then re-generate your pb file again by this tool."+
+					"If you are not using pb serialization, please set 'interfaceName' field in reference config to let dubbogo get the interface name.", registeredTypeName)
+				continue
+			} else {
+				// use interface name defined by pb
+				refConfig.InterfaceName = triplePBService.XXX_InterfaceName()
+			}
+			if err := refConfig.Init(rootConfig); err != nil {
+				logger.Errorf(fmt.Sprintf("reference with registeredTypeName = %s init failed! err: %#v", registeredTypeName, err))
+				continue
+			}
 		}
-		consumerConfig.fresh()
+		refConfig.id = registeredTypeName
+		refConfig.Refer(refRPCService)
+		refConfig.Implement(refRPCService)
 	}
-	if consumerConfig.Request_Timeout != "" {
-		if consumerConfig.RequestTimeout, err = time.ParseDuration(consumerConfig.Request_Timeout); err != nil {
-			return perrors.WithMessagef(err, "time.ParseDuration(Request_Timeout{%#v})", consumerConfig.Request_Timeout)
+
+	var maxWait int
+
+	if maxWaitDuration, err := time.ParseDuration(cc.MaxWaitTimeForServiceDiscovery); err != nil {
+		logger.Warnf("Invalid consumer max wait time for service discovery: %s, fallback to 3s", cc.MaxWaitTimeForServiceDiscovery)
+		maxWait = 3
+	} else {
+		maxWait = int(maxWaitDuration.Seconds())
+	}
+
+	// wait for invoker is available, if wait over default 3s, then panic
+	var count int
+	for {
+		checkok := true
+		for key, ref := range cc.References {
+			if (ref.Check != nil && *ref.Check && GetProviderService(key) == nil) ||
+				(ref.Check == nil && cc.Check && GetProviderService(key) == nil) ||
+				(ref.Check == nil && GetProviderService(key) == nil) { // default to true
+
+				if ref.invoker != nil && !ref.invoker.IsAvailable() {
+					checkok = false
+					count++
+					if count > maxWait {
+						errMsg := fmt.Sprintf("No provider available of the service %v.please check configuration.", ref.InterfaceName)
+						logger.Error(errMsg)
+						panic(errMsg)
+					}
+					time.Sleep(time.Second * 1)
+					break
+				}
+				if ref.invoker == nil {
+					logger.Warnf("The interface %s invoker not exist, may you should check your interface config.", ref.InterfaceName)
+				}
+			}
+		}
+		if checkok {
+			break
 		}
 	}
-	if consumerConfig.Connect_Timeout != "" {
-		if consumerConfig.ConnectTimeout, err = time.ParseDuration(consumerConfig.Connect_Timeout); err != nil {
-			return perrors.WithMessagef(err, "time.ParseDuration(Connect_Timeout{%#v})", consumerConfig.Connect_Timeout)
-		}
+}
+
+// SetConsumerConfig sets consumerConfig by @c
+func SetConsumerConfig(c ConsumerConfig) {
+	rootConfig.Consumer = &c
+}
+
+func newEmptyConsumerConfig() *ConsumerConfig {
+	newConsumerConfig := &ConsumerConfig{
+		References:     make(map[string]*ReferenceConfig, 8),
+		RequestTimeout: "3s",
+		Check:          true,
 	}
-	return err
+	return newConsumerConfig
+}
+
+type ConsumerConfigBuilder struct {
+	consumerConfig *ConsumerConfig
+}
+
+func NewConsumerConfigBuilder() *ConsumerConfigBuilder {
+	return &ConsumerConfigBuilder{consumerConfig: newEmptyConsumerConfig()}
+}
+
+func (ccb *ConsumerConfigBuilder) SetFilter(filter string) *ConsumerConfigBuilder {
+	ccb.consumerConfig.Filter = filter
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetRegistryIDs(RegistryIDs ...string) *ConsumerConfigBuilder {
+	ccb.consumerConfig.RegistryIDs = RegistryIDs
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetRequestTimeout(requestTimeout string) *ConsumerConfigBuilder {
+	ccb.consumerConfig.RequestTimeout = requestTimeout
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetMaxWaitTimeForServiceDiscovery(maxWaitTimeForServiceDiscovery string) *ConsumerConfigBuilder {
+	ccb.consumerConfig.MaxWaitTimeForServiceDiscovery = maxWaitTimeForServiceDiscovery
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetProxyFactory(proxyFactory string) *ConsumerConfigBuilder {
+	ccb.consumerConfig.ProxyFactory = proxyFactory
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetCheck(check bool) *ConsumerConfigBuilder {
+	ccb.consumerConfig.Check = check
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) AddReference(referenceKey string, referenceConfig *ReferenceConfig) *ConsumerConfigBuilder {
+	ccb.consumerConfig.References[referenceKey] = referenceConfig
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetReferences(references map[string]*ReferenceConfig) *ConsumerConfigBuilder {
+	ccb.consumerConfig.References = references
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetFilterConf(filterConf interface{}) *ConsumerConfigBuilder {
+	ccb.consumerConfig.FilterConf = filterConf
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) SetRootConfig(rootConfig *RootConfig) *ConsumerConfigBuilder {
+	ccb.consumerConfig.rootConfig = rootConfig
+	return ccb
+}
+
+func (ccb *ConsumerConfigBuilder) Build() *ConsumerConfig {
+	return ccb.consumerConfig
+}
+
+// DynamicUpdateProperties dynamically update properties.
+func (cc *ConsumerConfig) DynamicUpdateProperties(newConsumerConfig *ConsumerConfig) {
+	if newConsumerConfig != nil && newConsumerConfig.RequestTimeout != cc.RequestTimeout {
+		cc.RequestTimeout = newConsumerConfig.RequestTimeout
+		logger.Infof("ConsumerConfig's RequestTimeout was dynamically updated, new value:%v", cc.RequestTimeout)
+	}
 }

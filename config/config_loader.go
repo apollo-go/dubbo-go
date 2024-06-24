@@ -18,145 +18,163 @@
 package config
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"time"
+	"errors"
+	"reflect"
+	"strconv"
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/logger"
+	"github.com/knadh/koanf"
+
+	perrors "github.com/pkg/errors"
+)
+
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/common/extension"
+	"dubbo.apache.org/dubbo-go/v3/registry"
 )
 
 var (
-	consumerConfig *ConsumerConfig
-	providerConfig *ProviderConfig
-	maxWait        = 3
+	rootConfig = NewRootConfigBuilder().Build()
 )
 
-// loaded consumer & provider config from xxx.yml, and log config from xxx.xml
-// Namely: dubbo.consumer.xml & dubbo.provider.xml in java dubbo
-func init() {
-	var (
-		confConFile, confProFile string
-	)
-
-	confConFile = os.Getenv(constant.CONF_CONSUMER_FILE_PATH)
-	confProFile = os.Getenv(constant.CONF_PROVIDER_FILE_PATH)
-	if errCon := ConsumerInit(confConFile); errCon != nil {
-		log.Printf("[consumerInit] %#v", errCon)
-		consumerConfig = nil
-	}
-	if errPro := ProviderInit(confProFile); errPro != nil {
-		log.Printf("[providerInit] %#v", errPro)
-		providerConfig = nil
-	}
-}
-
-func checkRegistries(registries map[string]*RegistryConfig, singleRegistry *RegistryConfig) {
-	if len(registries) == 0 && singleRegistry != nil {
-		registries[constant.DEFAULT_KEY] = singleRegistry
-	}
-}
-
-func checkApplicationName(config *ApplicationConfig) {
-	if config == nil || len(config.Name) == 0 {
-		errMsg := "application config must not be nil, pls check your configuration"
-		logger.Errorf(errMsg)
-		panic(errMsg)
-	}
-}
-
-// Dubbo Init
-func Load() {
-	// reference config
-	if consumerConfig == nil {
-		logger.Warnf("consumerConfig is nil!")
+func Load(opts ...LoaderConfOption) error {
+	// conf
+	conf := NewLoaderConf(opts...)
+	if conf.rc == nil {
+		koan := GetConfigResolver(conf)
+		koan = conf.MergeConfig(koan)
+		if err := koan.UnmarshalWithConf(rootConfig.Prefix(),
+			rootConfig, koanf.UnmarshalConf{Tag: "yaml"}); err != nil {
+			return err
+		}
 	} else {
-		checkApplicationName(consumerConfig.ApplicationConfig)
-		if err := configCenterRefreshConsumer(); err != nil {
-			logger.Errorf("[consumer config center refresh] %#v", err)
-		}
-		checkRegistries(consumerConfig.Registries, consumerConfig.Registry)
-		for key, ref := range consumerConfig.References {
-			if ref.Generic {
-				genericService := NewGenericService(key)
-				SetConsumerService(genericService)
-			}
-			rpcService := GetConsumerService(key)
-			if rpcService == nil {
-				logger.Warnf("%s does not exist!", key)
-				continue
-			}
-			ref.id = key
-			ref.Refer()
-			ref.Implement(rpcService)
-		}
-		//wait for invoker is available, if wait over default 3s, then panic
-		var count int
-		checkok := true
-		for {
-			for _, refconfig := range consumerConfig.References {
-				if (refconfig.Check != nil && *refconfig.Check) ||
-					(refconfig.Check == nil && consumerConfig.Check != nil && *consumerConfig.Check) ||
-					(refconfig.Check == nil && consumerConfig.Check == nil) { //default to true
-
-					if refconfig.invoker != nil &&
-						!refconfig.invoker.IsAvailable() {
-						checkok = false
-						count++
-						if count > maxWait {
-							errMsg := fmt.Sprintf("Failed to check the status of the service %v . No provider available for the service to the consumer use dubbo version %v", refconfig.InterfaceName, constant.Version)
-							logger.Error(errMsg)
-							panic(errMsg)
-						}
-						time.Sleep(time.Second * 1)
-						break
-					}
-					if refconfig.invoker == nil {
-						logger.Warnf("The interface %s invoker not exist , may you should check your interface config.", refconfig.InterfaceName)
-					}
-				}
-			}
-			if checkok {
-				break
-			}
-			checkok = true
-		}
+		rootConfig = conf.rc
 	}
 
-	// service config
-	if providerConfig == nil {
-		logger.Warnf("providerConfig is nil!")
-	} else {
-		checkApplicationName(providerConfig.ApplicationConfig)
-		if err := configCenterRefreshProvider(); err != nil {
-			logger.Errorf("[provider config center refresh] %#v", err)
+	if err := rootConfig.Init(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func check() error {
+	if rootConfig == nil {
+		return errors.New("execute the config.Load() method first")
+	}
+	return nil
+}
+
+// registerServiceInstance register service instance
+func registerServiceInstance() {
+	url := selectMetadataServiceExportedURL()
+	if url == nil {
+		return
+	}
+	instance, err := createInstance(url)
+	if err != nil {
+		panic(err)
+	}
+	p := extension.GetProtocol(constant.RegistryProtocol)
+	var rp registry.RegistryFactory
+	var ok bool
+	if rp, ok = p.(registry.RegistryFactory); !ok {
+		panic("dubbo registry protocol{" + reflect.TypeOf(p).String() + "} is invalid")
+	}
+	rs := rp.GetRegistries()
+	for _, r := range rs {
+		var sdr registry.ServiceDiscoveryHolder
+		if sdr, ok = r.(registry.ServiceDiscoveryHolder); !ok {
+			continue
 		}
-		checkRegistries(providerConfig.Registries, providerConfig.Registry)
-		for key, svs := range providerConfig.Services {
-			rpcService := GetProviderService(key)
-			if rpcService == nil {
-				logger.Warnf("%s does not exist!", key)
-				continue
-			}
-			svs.id = key
-			svs.Implement(rpcService)
-			if err := svs.Export(); err != nil {
-				panic(fmt.Sprintf("service %s export failed! ", key))
-			}
+		// publish app level data to registry
+		err := sdr.GetServiceDiscovery().Register(instance)
+		if err != nil {
+			panic(err)
+		}
+	}
+	// publish metadata to remote
+	if GetApplicationConfig().MetadataType == constant.RemoteMetadataStorageType {
+		if remoteMetadataService, err := extension.GetRemoteMetadataService(); err == nil && remoteMetadataService != nil {
+			remoteMetadataService.PublishMetadata(GetApplicationConfig().Name)
 		}
 	}
 }
 
-// get rpc service for consumer
+//
+//// nolint
+func createInstance(url *common.URL) (registry.ServiceInstance, error) {
+	appConfig := GetApplicationConfig()
+	port, err := strconv.ParseInt(url.Port, 10, 32)
+	if err != nil {
+		return nil, perrors.WithMessage(err, "invalid port: "+url.Port)
+	}
+
+	host := url.Ip
+	if len(host) == 0 {
+		host = common.GetLocalIp()
+	}
+
+	// usually we will add more metadata
+	metadata := make(map[string]string, 8)
+	metadata[constant.MetadataStorageTypePropertyName] = appConfig.MetadataType
+
+	instance := &registry.DefaultServiceInstance{
+		ServiceName: appConfig.Name,
+		Host:        host,
+		Port:        int(port),
+		ID:          host + constant.KeySeparator + url.Port,
+		Enable:      true,
+		Healthy:     true,
+		Metadata:    metadata,
+	}
+
+	for _, cus := range extension.GetCustomizers() {
+		cus.Customize(instance)
+	}
+
+	return instance, nil
+}
+
+// GetRPCService get rpc service for consumer
 func GetRPCService(name string) common.RPCService {
-	return consumerConfig.References[name].GetRPCService()
+	return rootConfig.Consumer.References[name].GetRPCService()
 }
 
-// create rpc service for consumer
+// RPCService create rpc service for consumer
 func RPCService(service common.RPCService) {
-	consumerConfig.References[service.Reference()].Implement(service)
+	ref := common.GetReference(service)
+	rootConfig.Consumer.References[ref].Implement(service)
+}
+
+// GetMetricConfig find the MetricConfig
+// if it is nil, create a new one
+// we use double-check to reduce race condition
+// In general, it will be locked 0 or 1 time.
+// So you don't need to worry about the race condition
+func GetMetricConfig() *MetricConfig {
+	// todo
+	//if GetBaseConfig().Metric == nil {
+	//	configAccessMutex.Lock()
+	//	defer configAccessMutex.Unlock()
+	//	if GetBaseConfig().Metric == nil {
+	//		GetBaseConfig().Metric = &metric.Metric{}
+	//	}
+	//}
+	//return GetBaseConfig().Metric
+	return rootConfig.Metric
+}
+
+func GetTracingConfig(tracingKey string) *TracingConfig {
+	return rootConfig.Tracing[tracingKey]
+}
+
+func GetMetadataReportConfg() *MetadataReportConfig {
+	return rootConfig.MetadataReport
+}
+
+func IsProvider() bool {
+	return len(rootConfig.Provider.Services) > 0
 }

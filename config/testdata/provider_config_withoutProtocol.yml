@@ -27,7 +27,7 @@ registries :
 
 services:
   "UserProvider":
-    registry: "hangzhouzk,shanghaizk"
+    registry-ids: "hangzhouzk,shanghaizk"
     filter: ""
     # equivalent to interface of dubbo.xml
     interface : "com.ikurento.user.UserProvider"
@@ -51,6 +51,10 @@ protocols:
   #    ip: "127.0.0.1"
   #    port: 20001
 
+shutdown_conf:
+  timeout: 60s
+  step-timeout: 10s
+
 protocol_conf:
   dubbo:
     session_number: 700
@@ -68,9 +72,8 @@ protocol_conf:
       keep_alive_period: "120s"
       tcp_r_buf_size: 262144
       tcp_w_buf_size: 65536
-      pkg_wq_size: 512
       tcp_read_timeout: "1s"
       tcp_write_timeout: "5s"
       wait_timeout: "1s"
-      max_msg_len: 1024
+      max_msg_len: 16498688
       session_name: "server"

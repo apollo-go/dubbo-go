@@ -22,24 +22,27 @@ import (
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/protocol"
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/protocol"
 )
 
 type mockProtocolFilter struct{}
 
+// NewMockProtocolFilter creates a new mock protocol
 func NewMockProtocolFilter() protocol.Protocol {
 	return &mockProtocolFilter{}
 }
 
+// Export mock service for  remote invocation
 func (pfw *mockProtocolFilter) Export(invoker protocol.Invoker) protocol.Exporter {
 	return protocol.NewBaseExporter("key", invoker, &sync.Map{})
 }
 
-func (pfw *mockProtocolFilter) Refer(url common.URL) protocol.Invoker {
+// Refer a mock remote service
+func (pfw *mockProtocolFilter) Refer(url *common.URL) protocol.Invoker {
 	return protocol.NewBaseInvoker(url)
 }
 
+// Destroy will do nothing
 func (pfw *mockProtocolFilter) Destroy() {
-
 }

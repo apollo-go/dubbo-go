@@ -17,8 +17,14 @@
 
 package constant
 
+// nolint
 const (
-	CONF_CONSUMER_FILE_PATH = "CONF_CONSUMER_FILE_PATH"
-	CONF_PROVIDER_FILE_PATH = "CONF_PROVIDER_FILE_PATH"
-	APP_LOG_CONF_FILE       = "APP_LOG_CONF_FILE"
+	ConfigFileEnvKey   = "DUBBO_GO_CONFIG_PATH" // key of environment variable dubbogo configure file path
+	AppLogConfFile     = "AppLogConfFile"
+	PodNameEnvKey      = "POD_NAME"
+	PodNamespaceEnvKey = "POD_NAMESPACE"
+
+	DubboIpToRegistryKey       = "DUBBO_IP_TO_REGISTRY"
+	DubboPortToRegistryKey     = "DUBBO_PORT_TO_REGISTRY"
+	DubboDefaultPortToRegistry = "80"
 )

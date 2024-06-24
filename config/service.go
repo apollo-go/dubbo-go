@@ -18,28 +18,81 @@
 package config
 
 import (
-	"github.com/apache/dubbo-go/common"
+	"sync"
+)
+
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
 )
 
 var (
-	conServices = map[string]common.RPCService{} // service name -> service
-	proServices = map[string]common.RPCService{} // service name -> service
+	conServicesLock              = sync.Mutex{}                   // used to guard conServices map.
+	conServices                  = map[string]common.RPCService{} // service name -> service
+	proServicesLock              = sync.Mutex{}                   // used to guard proServices map
+	proServices                  = map[string]common.RPCService{} // service name -> service
+	interfaceNameConServicesLock = sync.Mutex{}                   // used to guard interfaceNameConServices map
+	interfaceNameConServices     = map[string]common.RPCService{} // interfaceName -> service
 )
 
-// SetConService is called by init() of implement of RPCService
+// SetConsumerService is called by init() of implement of RPCService
 func SetConsumerService(service common.RPCService) {
-	conServices[service.Reference()] = service
+	ref := common.GetReference(service)
+	conServicesLock.Lock()
+	defer conServicesLock.Unlock()
+	conServices[ref] = service
 }
 
-// SetProService is called by init() of implement of RPCService
+// SetProviderService is called by init() of implement of RPCService
 func SetProviderService(service common.RPCService) {
-	proServices[service.Reference()] = service
+	ref := common.GetReference(service)
+	proServicesLock.Lock()
+	defer proServicesLock.Unlock()
+	proServices[ref] = service
 }
 
+// GetConsumerService gets ConsumerService by @name
 func GetConsumerService(name string) common.RPCService {
+	conServicesLock.Lock()
+	defer conServicesLock.Unlock()
 	return conServices[name]
 }
 
+// GetProviderService gets ProviderService by @name
 func GetProviderService(name string) common.RPCService {
+	proServicesLock.Lock()
+	defer proServicesLock.Unlock()
 	return proServices[name]
+}
+
+// GetProviderServiceMap gets ProviderServiceMap
+func GetProviderServiceMap() map[string]common.RPCService {
+	return proServices
+}
+
+// GetConsumerServiceMap gets ProviderServiceMap
+func GetConsumerServiceMap() map[string]common.RPCService {
+	return conServices
+}
+
+// SetConsumerServiceByInterfaceName is used by pb serialization
+func SetConsumerServiceByInterfaceName(interfaceName string, srv common.RPCService) {
+	interfaceNameConServicesLock.Lock()
+	defer interfaceNameConServicesLock.Unlock()
+	interfaceNameConServices[interfaceName] = srv
+}
+
+// GetConsumerServiceByInterfaceName is used by pb serialization
+func GetConsumerServiceByInterfaceName(interfaceName string) common.RPCService {
+	interfaceNameConServicesLock.Lock()
+	defer interfaceNameConServicesLock.Unlock()
+	return interfaceNameConServices[interfaceName]
+}
+
+// GetCallback gets CallbackResponse by @name
+func GetCallback(name string) func(response common.CallbackResponse) {
+	service := GetConsumerService(name)
+	if sv, ok := service.(common.AsyncCallbackService); ok {
+		return sv.CallBack
+	}
+	return nil
 }

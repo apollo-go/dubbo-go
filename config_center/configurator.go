@@ -18,9 +18,10 @@
 package config_center
 
 import (
-	"github.com/apache/dubbo-go/common"
+	"dubbo.apache.org/dubbo-go/v3/common"
 )
 
+// Configurator is the interface which wraps  GetUrl and Configure method.
 type Configurator interface {
 	GetUrl() *common.URL
 	Configure(url *common.URL)

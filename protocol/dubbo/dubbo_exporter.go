@@ -22,27 +22,33 @@ import (
 )
 
 import (
-	"github.com/apache/dubbo-go/common"
-	"github.com/apache/dubbo-go/common/constant"
-	"github.com/apache/dubbo-go/common/logger"
-	"github.com/apache/dubbo-go/protocol"
+	"github.com/dubbogo/gost/log/logger"
 )
 
+import (
+	"dubbo.apache.org/dubbo-go/v3/common"
+	"dubbo.apache.org/dubbo-go/v3/common/constant"
+	"dubbo.apache.org/dubbo-go/v3/protocol"
+)
+
+// DubboExporter is dubbo service exporter.
 type DubboExporter struct {
 	protocol.BaseExporter
 }
 
+// NewDubboExporter get a DubboExporter.
 func NewDubboExporter(key string, invoker protocol.Invoker, exporterMap *sync.Map) *DubboExporter {
 	return &DubboExporter{
 		BaseExporter: *protocol.NewBaseExporter(key, invoker, exporterMap),
 	}
 }
 
-func (de *DubboExporter) Unexport() {
-	serviceId := de.GetInvoker().GetUrl().GetParam(constant.BEAN_NAME_KEY, "")
-	de.BaseExporter.Unexport()
-	err := common.ServiceMap.UnRegister(DUBBO, serviceId)
+// Unexport unexport dubbo service exporter.
+func (de *DubboExporter) UnExport() {
+	interfaceName := de.GetInvoker().GetURL().GetParam(constant.InterfaceKey, "")
+	de.BaseExporter.UnExport()
+	err := common.ServiceMap.UnRegister(interfaceName, DUBBO, de.GetInvoker().GetURL().ServiceKey())
 	if err != nil {
-		logger.Errorf("[DubboExporter.Unexport] error: %v", err)
+		logger.Errorf("[DubboExporter.UnExport] error: %v", err)
 	}
 }

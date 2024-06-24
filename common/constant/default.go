@@ -18,52 +18,76 @@
 package constant
 
 const (
-	DUBBO             = "dubbo"
-	PROVIDER_PROTOCOL = "provider"
-	//compatible with 2.6.x
-	OVERRIDE_PROTOCOL = "override"
-	EMPTY_PROTOCOL    = "empty"
-	ROUTER_PROTOCOL   = "router"
+	Dubbo            = "dubbo"
+	ProviderProtocol = "provider"
+	OverrideProtocol = "override" //compatible with 2.6.x
+	EmptyProtocol    = "empty"
+	RouterProtocol   = "router"
 )
 
 const (
-	DEFAULT_WEIGHT = 100     //
-	DEFAULT_WARMUP = 10 * 60 // in java here is 10*60*1000 because of System.currentTimeMillis() is measured in milliseconds & in go time.Unix() is second
+	DefaultWeight           = 100
+	DefaultWarmup           = 10 * 60 // in java here is 10*60*1000 because of System.currentTimeMillis() is measured in milliseconds & in go time.Unix() is second
+	DefaultLoadBalance      = "random"
+	DefaultRetries          = "2"
+	DefaultRetriesInt       = 2
+	DefaultProtocol         = "dubbo"
+	DefaultRegTimeout       = "5s"
+	DefaultRegTTL           = "15m"
+	DefaultCluster          = "failover"
+	DefaultFailbackTimes    = "3"
+	DefaultFailbackTimesInt = 3
+	DefaultFailbackTasks    = 100
+	DefaultRestClient       = "resty"
+	DefaultRestServer       = "go-restful"
+	DefaultPort             = 20000
 )
 
 const (
-	DEFAULT_LOADBALANCE        = "random"
-	DEFAULT_RETRIES            = "2"
-	DEFAULT_RETRIES_INT        = 2
-	DEFAULT_PROTOCOL           = "dubbo"
-	DEFAULT_REG_TIMEOUT        = "10s"
-	DEFAULT_CLUSTER            = "failover"
-	DEFAULT_FAILBACK_TIMES     = "3"
-	DEFAULT_FAILBACK_TIMES_INT = 3
-	DEFAULT_FAILBACK_TASKS     = 100
+	DefaultKey   = "default"
+	Generic      = "$invoke"
+	GenericAsync = "$invokeAsync"
+	Echo         = "$echo"
+)
+
+// default filters
+const (
+	// DefaultServiceFilters defines default service filters, it is highly recommended
+	// that put the AdaptiveServiceProviderFilterKey at the end.
+	DefaultServiceFilters = EchoFilterKey + "," +
+		MetricsFilterKey + "," + TokenFilterKey + "," + AccessLogFilterKey + "," + TpsLimitFilterKey + "," +
+		GenericServiceFilterKey + "," + ExecuteLimitFilterKey + "," + GracefulShutdownProviderFilterKey
+
+	DefaultReferenceFilters = GracefulShutdownConsumerFilterKey
 )
 
 const (
-	DEFAULT_KEY               = "default"
-	PREFIX_DEFAULT_KEY        = "default."
-	DEFAULT_SERVICE_FILTERS   = "echo,token,accesslog"
-	DEFAULT_REFERENCE_FILTERS = ""
-	GENERIC_REFERENCE_FILTERS = "generic"
-	GENERIC                   = "$invoke"
-	ECHO                      = "$echo"
+	AnyValue          = "*"
+	AnyHostValue      = "0.0.0.0"
+	LocalHostValue    = "192.168.1.1"
+	RemoveValuePrefix = "-"
 )
 
 const (
-	ANY_VALUE           = "*"
-	ANYHOST_VALUE       = "0.0.0.0"
-	REMOVE_VALUE_PREFIX = "-"
+	ConfiguratorsCategory           = "configurators"
+	RouterCategory                  = "category"
+	DefaultCategory                 = ProviderCategory
+	DynamicConfiguratorsCategory    = "dynamicconfigurators"
+	AppDynamicConfiguratorsCategory = "appdynamicconfigurators"
+	ProviderCategory                = "providers"
+	ConsumerCategory                = "consumers"
 )
 
 const (
-	CONFIGURATORS_CATEGORY             = "configurators"
-	ROUTER_CATEGORY                    = "category"
-	DEFAULT_CATEGORY                   = PROVIDER_CATEGORY
-	DYNAMIC_CONFIGURATORS_CATEGORY     = "dynamicconfigurators"
-	APP_DYNAMIC_CONFIGURATORS_CATEGORY = "appdynamicconfigurators"
-	PROVIDER_CATEGORY                  = "providers"
+	CommaSplitPattern = "\\s*[,]+\\s*"
+)
+
+const (
+	SimpleMetadataServiceName = "MetadataService"
+	DefaultRevision           = "N/A"
+)
+
+const (
+	ServiceDiscoveryDefaultGroup = "DEFAULT_GROUP"
+	NotAvailable                 = "N/A"
 )

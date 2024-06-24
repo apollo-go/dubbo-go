@@ -5,6 +5,7 @@
 *.so
 *.dylib
 *.jar
+*.log
 
 # Test binary, build with `go test -c`
 *.test
@@ -19,14 +20,24 @@ target/
 classes
 
 # go mod, go test
+.go-version
 vendor/
-coverage.txt
-
 logs/
 .vscode/
-coverage.txt
+cache
+log/
 
 # unit test
 remoting/zookeeper/zookeeper-4unittest/
 config_center/zookeeper/zookeeper-4unittest/
 registry/zookeeper/zookeeper-4unittest/
+metadata/report/zookeeper/zookeeper-4unittest/
+
+# vim stuff
+*~
+.*.sw?
+/license-header-checker-linux/
+/license-header-checker-linux.zip
+
+# macOS
+.DS_Store
